@@ -1,0 +1,126 @@
+{
+  "numeric": {
+    "Age": {
+      "min": 60.0,
+      "max": 90.0,
+      "scaled": true
+    },
+    "Ethnicity": {
+      "min": 0.0,
+      "max": 3.0,
+      "scaled": true
+    },
+    "EducationLevel": {
+      "min": 0.0,
+      "max": 3.0,
+      "scaled": true
+    },
+    "BMI": {
+      "min": 15.00885118163106,
+      "max": 39.99276746402374,
+      "scaled": true
+    },
+    "AlcoholConsumption": {
+      "min": 0.0020030991362718,
+      "max": 19.98929335906197,
+      "scaled": true
+    },
+    "PhysicalActivity": {
+      "min": 0.003616016826019,
+      "max": 9.987429413422252,
+      "scaled": true
+    },
+    "DietQuality": {
+      "min": 0.00938472011623,
+      "max": 9.99834567881401,
+      "scaled": true
+    },
+    "SleepQuality": {
+      "min": 4.002628659826611,
+      "max": 9.99984031668144,
+      "scaled": true
+    },
+    "SystolicBP": {
+      "min": 90.0,
+      "max": 179.0,
+      "scaled": true
+    },
+    "DiastolicBP": {
+      "min": 60.0,
+      "max": 119.0,
+      "scaled": true
+    },
+    "CholesterolTotal": {
+      "min": 150.09331559406317,
+      "max": 299.99335247432657,
+      "scaled": true
+    },
+    "CholesterolLDL": {
+      "min": 50.23070655980742,
+      "max": 199.96566510142804,
+      "scaled": true
+    },
+    "CholesterolHDL": {
+      "min": 20.00343401498445,
+      "max": 99.98032407804152,
+      "scaled": true
+    },
+    "CholesterolTriglycerides": {
+      "min": 50.40719361978579,
+      "max": 399.9418615941332,
+      "scaled": true
+    },
+    "MMSE": {
+      "min": 0.0053121464417005,
+      "max": 29.991380560529063,
+      "scaled": true
+    },
+    "FunctionalAssessment": {
+      "min": 0.000459593595804,
+      "max": 9.996467072555015,
+      "scaled": true
+    },
+    "ADL": {
+      "min": 0.0012879277024868,
+      "max": 9.99974712180168,
+      "scaled": true
+    }
+  },
+  "categorical_mappings": {},
+  "boolean_cols": [
+    "Gender",
+    "Smoking",
+    "FamilyHistoryAlzheimers",
+    "CardiovascularDisease",
+    "Diabetes",
+    "Depression",
+    "HeadInjury",
+    "Hypertension",
+    "MemoryComplaints",
+    "BehavioralProblems",
+    "Confusion",
+    "Disorientation",
+    "PersonalityChanges",
+    "DifficultyCompletingTasks",
+    "Forgetfulness",
+    "Diagnosis"
+  ],
+  "binary_cols": [
+    "Gender",
+    "Smoking",
+    "FamilyHistoryAlzheimers",
+    "CardiovascularDisease",
+    "Diabetes",
+    "Depression",
+    "HeadInjury",
+    "Hypertension",
+    "MemoryComplaints",
+    "BehavioralProblems",
+    "Confusion",
+    "Disorientation",
+    "PersonalityChanges",
+    "DifficultyCompletingTasks",
+    "Forgetfulness",
+    "Diagnosis"
+  ]
+}
