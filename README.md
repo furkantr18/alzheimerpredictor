@@ -56,11 +56,13 @@ Our methodology follows a standard data science pipeline:
 4.  **Model Training & Testing:** Splitting the data into training and testing sets and evaluating model performance using metrics such as Accuracy, F1-Score, and ROC-AUC.
 5.  **Proposed Solution:** Deploying the best-performing model as part of a predictive system designed to assist clinicians in early disease detection.
 
-## 💻 Technologies Used
--   **Data Processing & Analytics:** Pandas, NumPy, Scikit-learn
--   **Machine Learning & Modeling:** Scikit-learn, XGBoost, TensorFlow, PyTorch
--   **Data Visualization:** Matplotlib, Seaborn
--   **Development Environment:** Jupyter Notebook
+## 💻 Technologies and Development Stack 
+- 🐍 **Programming Language:** Python — core for data processing, ML model development, and backend logic  
+- ⚙️ **Backend Framework:** FastAPI — serves ML model predictions and manages data communication  
+- 🧩 **Frontend Platform:** Oracle APEX — low-code, browser-based interface for data input and visualization  
+- 📁 **Data Source:** CSV files — primary storage for patient data and model results  
+- 📊 **Libraries & Tools:** Pandas, NumPy, Scikit-learn, XGBoost, Matplotlib, Seaborn  
+- 🧑‍💻 **Development Environment:** Visual Studio Code — used for coding, debugging, and project integration  
 
 ## 🚀 Getting Started
 
@@ -85,11 +87,14 @@ Open the main notebook file to explore the analysis and models.
 
 ## 📚 References
 
-This work is informed by established research in the field of predictive healthcare analytics and Alzheimer's diagnosis. Key literature includes:
+This work is informed by established research in predictive healthcare analytics, data warehousing, and Alzheimer's disease diagnosis. Key literature includes:
 
--   Arya, A.D., et al. (2023). *A systematic review on machine learning and deep learning techniques in the effective diagnosis of Alzheimer’s disease.* Brain Informatics.
--   Babulal, G.M., et al. (2021). *Alzheimer’s disease diagnosis using machine learning with clinical, imaging, and genetic data: a comparative study.* Research Square [Preprint].
--   World Health Organization. (2023). *Dementia Fact Sheet*.
--   El Kharoua, R. (2024). *Alzheimer’s Disease Dataset.* Kaggle.
-
----
+1. **World Health Organization.** (2023). *Dementia Fact Sheet.* Available at: [https://www.who.int/news-room/fact-sheets/detail/dementia](https://www.who.int/news-room/fact-sheets/detail/dementia)  
+2. **Lyu, S., Craig, S., O’Reilly, G., & Taniar, D.** (2025). *The development and use of data warehousing in clinical settings: a scoping review.* *Frontiers in Digital Health.*  
+3. **Setia, S., et al.** (2024). *Integrated Real-World Data Warehouses Across 7 Asian Health Care Systems: Scoping Review.* *JMIR.*  
+4. **Patharkar, P., Cai, J., Al-Hindawi, M., & Wu, W.** (2024). *Predictive Modeling of Biomedical Temporal Data in Healthcare Applications: Review and Future Directions.* *Frontiers in Physiology.*  
+5. **Badawy, M., Ramadan, N., & Hefny, H.** (2023). *Healthcare predictive analytics using machine learning and deep learning: a survey.* *Journal of Electrical Systems and Information Technology.*  
+6. **Babulal, G.M., Zeng, H., et al.** (2021). *Alzheimer’s disease diagnosis using machine learning with clinical, imaging, and genetic data: a comparative study.* *Research Square* [Preprint]. DOI: [10.21203/rs.3.rs-624520/v1](https://doi.org/10.21203/rs.3.rs-624520/v1)  
+7. **Arya, A.D., et al.** (2023). *A systematic review on machine learning and deep learning techniques in the effective diagnosis of Alzheimer’s disease.* *Brain Informatics*, 10(1), 13. DOI: [10.1186/s40708-023-00205-1](https://doi.org/10.1186/s40708-023-00205-1)  
+8. **El Kharoua, R.** (2024). *Alzheimer’s Disease Dataset.* *Kaggle.* Available at: [https://www.kaggle.com/datasets/rabieelkharoua/alzheimers-disease-dataset](https://www.kaggle.com/datasets/rabieelkharoua/alzheimers-disease-dataset)  
+9. **Cochrane, C., Castineira, D., Shiban, N., & Protopapas, P.** (2020). *Application of Machine Learning to Predict the Risk of Alzheimer's Disease: An Accurate and Practical Solution for Early Diagnostics.* *arXiv preprint* [abs/2006.08702](https://arxiv.org/abs/2006.08702)  
