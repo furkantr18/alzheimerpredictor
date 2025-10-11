@@ -327,9 +327,12 @@ def plot_distributions(attributes: list[str], df: pd.DataFrame, combine: bool = 
             sns.barplot(x=vals.values, y=vals.index, ax=ax)
         # place the title above the subplot and add a small pad
         ax.set_title(f'{attr} distribution', pad=6)
-        # remove x-axis tick labels for individual distribution figures to reduce clutter
-        ax.set_xticklabels([])
-        ax.set_xlabel('')
+        # show x-axis tick labels for saved individual distribution figures
+        display = DISPLAY_NAME_MAP.get(attr, attr)
+        ax.set_xlabel(display)
+        ax.tick_params(axis='x', labelsize=8)
+        for label in ax.get_xticklabels():
+            label.set_rotation(30)
         ax.set_ylabel('')
         if SAVE_PLOTS:
             out = save_figure(fig, attr, subfolder='distribution')
@@ -984,9 +987,12 @@ def plot_histograms(column_list: list[str], fig_title: str, df: pd.DataFrame, pe
         ax = axes[i]
         ax.hist(df[col].dropna(), bins=20, color='pink', edgecolor='black')
         ax.set_title(f'{col} Distribution', fontsize=10, pad=6)
-        # hide x-axis tick labels under each small histogram for clarity
-        ax.set_xlabel('')
-        ax.set_xticklabels([])
+        # show x-axis tick labels so numeric ranges are visible to the user
+        # use a smaller font and rotate if labels overlap
+        ax.set_xlabel(DISPLAY_NAME_MAP.get(col, col))
+        ax.tick_params(axis='x', labelsize=8)
+        for label in ax.get_xticklabels():
+            label.set_rotation(30)
         ax.set_ylabel('Number of Patients')
 
     # hide any unused axes
@@ -1017,8 +1023,11 @@ def plot_histograms(column_list: list[str], fig_title: str, df: pd.DataFrame, pe
                     sns.barplot(x=vals.values, y=vals.index, ax=ax2)
                 display = DISPLAY_NAME_MAP.get(col, col)
                 ax2.set_title(f'{display} Distribution', fontsize=12, pad=6)
-                ax2.set_xlabel('')
-                ax2.set_xticklabels([])
+                # show x-axis tick labels for per-column saved histograms
+                ax2.set_xlabel(display)
+                ax2.tick_params(axis='x', labelsize=9)
+                for label in ax2.get_xticklabels():
+                    label.set_rotation(30)
                 ax2.set_ylabel('Number of Patients')
                 save_figure(f2, safe_name, subfolder='histograms')
             except Exception:
@@ -1115,10 +1124,7 @@ def main():
         # per-user request: do not print per-plot distribution messages here
     except Exception as exc:
         print('distribution plots failed:', exc)
-
-        # Final user-requested summary message (single line)
-        if SAVE_PLOTS and not QUIET:
-            print('All plots saved to: {}'.format(OUTPUT_DIR))
+        
     # Combined figure with all distributions in a grid
     try:
         written_all = plot_distributions(attributes, df, combine=True, per_row=5)
@@ -1141,6 +1147,10 @@ def main():
         plot_violin_box_pairs(df)
     except Exception as exc:
         print('mmse violin plot failed:', exc)
+
+    # Final summary message: print once that all plots were saved (if saving enabled)
+    if SAVE_PLOTS and not QUIET:
+        print(f'All plots saved to: {OUTPUT_DIR}')
 
 
 if __name__ == '__main__':
