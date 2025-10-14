@@ -363,56 +363,72 @@ def plot_duplicate_values(df: pd.DataFrame) -> plt.Figure:
     For each column this computes: duplicate_count = total_rows - nunique(dropna=True).
     Columns with zero duplicate entries are omitted from the plot.
     """
-    # remove identifier columns from consideration
+    # New behavior: detect duplicate rows (identical full-row records) and
+    # plot counts of those duplicate row groups instead of per-column duplicates.
     df = _drop_identifier_columns(df)
-    total = len(df)
-    # compute duplicate counts per column (number of non-unique entries)
-    dup_counts = {}
-    for c in df.columns:
-        try:
-            nunq = df[c].nunique(dropna=True)
-        except Exception:
-            nunq = 0
-        dup = max(0, total - nunq)
-        dup_counts[c] = dup
+    if df is None or df.shape[0] == 0:
+        fig, ax = plt.subplots(figsize=(8, 3))
+        ax.text(0.5, 0.5, 'No data available', ha='center', va='center', fontsize=12)
+        ax.set_axis_off()
+        if SAVE_PLOTS:
+            save_figure(fig, 'duplicate_values')
+        if SHOW_PLOTS:
+            fig.show()
+        return fig
 
-    dup_series = pd.Series(dup_counts)
-    dup_series = dup_series[dup_series > 0].sort_values(ascending=False)
+    # create a short string signature for each row so identical rows map to the same key
+    try:
+        sigs = df.fillna('<NA>').astype(str).agg(' | '.join, axis=1)
+        counts = sigs.value_counts()
+        dup_series = counts[counts > 1].sort_values(ascending=False)
+    except Exception:
+        dup_series = pd.Series(dtype=float)
 
-    # choose a height proportional to number of rows so labels don't overlap
+    # choose figure size based on number of duplicate groups
     n = len(dup_series)
-    fig_h = max(3, 0.35 * n)
-    fig_w = max(SINGLE_PLOT_WIDTH, SINGLE_PLOT_WIDTH * 1.2)
+    fig_h = max(3, 0.6 * n)
+    fig_w = max(SINGLE_PLOT_WIDTH, 10)
     fig, ax = plt.subplots(figsize=(fig_w, fig_h))
+
     if dup_series.empty:
-        ax.text(0.5, 0.5, 'No duplicate values found', ha='center', va='center', fontsize=12)
+        ax.text(0.5, 0.5, 'No duplicate rows found', ha='center', va='center', fontsize=12)
         ax.set_axis_off()
     else:
-        # horizontal bars, largest first
-        # use a matplotlib horizontal bar chart with a Blues colormap mapped to counts
         vals = dup_series.values.astype(float)
         cmap = plt.cm.Blues
         if vals.max() > vals.min():
             norm_vals = (vals - vals.min()) / (vals.max() - vals.min())
         else:
             norm_vals = np.full_like(vals, 0.5)
-        # shift and scale so very small values are visible (avoid pure-white)
         colors = [cmap(0.3 + 0.7 * v) for v in norm_vals]
-        ax.barh(dup_series.index, dup_series.values, color=colors)
-        ax.set_xlabel('Number of duplicate entries')
-        ax.set_title('Duplicate values by column')
+
+        # Truncate long row signatures for y labels to keep chart readable
+        max_label_len = 120
+        labels = [s if len(s) <= max_label_len else s[:max_label_len-3] + '...' for s in dup_series.index]
+
+        ax.barh(range(len(dup_series)), vals, color=colors)
+        ax.set_yticks(range(len(dup_series)))
+        ax.set_yticklabels(labels)
+        ax.set_xlabel('Number of identical rows')
+        ax.set_title('Duplicate rows (identical full-row records)')
         ax.invert_yaxis()
 
-        # annotate bars with their values
-        for p in ax.patches:
-            width = p.get_width()
-            if width is None:
-                continue
-            ax.text(width + max(1, fig_w * 2), p.get_y() + p.get_height() / 2,
-                    f'{int(width)}', va='center', fontsize=9)
+        # Annotate bars: prefer placing text inside the bar when there's room
+        max_count = vals.max() if len(vals) else 1
+        for i, width in enumerate(vals):
+            # place inside if at least 10% of max_count, otherwise place outside
+            if width >= max_count * 0.10:
+                x = width - max(1, max_count * 0.02)
+                ha = 'right'
+                color = 'white'
+            else:
+                x = width + max(1, max_count * 0.02)
+                ha = 'left'
+                color = 'black'
+            ax.text(x, i, f'{int(width)}', va='center', fontsize=9, ha=ha, color=color)
 
-        # increase left margin so long y labels are visible
-        fig.subplots_adjust(left=0.30)
+        # make room on the left for long labels
+        fig.subplots_adjust(left=0.35)
 
     if SAVE_PLOTS:
         save_figure(fig, 'duplicate_values')
@@ -546,6 +562,191 @@ def plot_selected_correlation_heatmap(df: pd.DataFrame, corr_columns: list[str] 
     if SHOW_PLOTS:
         fig.show()
     return fig
+
+
+def plot_feature_target_correlations(df: pd.DataFrame, target: str = 'Diagnosis') -> Path | plt.Figure:
+    """Compute correlation between each feature and the target and plot them in one horizontal bar chart.
+
+    Behavior:
+    - Drops identifier columns automatically.
+    - If `target` is non-numeric, it will be factorized to numeric labels for correlation purposes.
+    - Uses numeric columns and attempts to coerce non-numeric columns using pandas.factorize.
+    - Returns the saved Path when SAVE_PLOTS is enabled, otherwise returns the Figure.
+    """
+    df = _drop_identifier_columns(df)
+    if target not in df.columns:
+        raise ValueError(f'Target column not found: {target}')
+
+    # prepare target series: make numeric if needed
+    y = df[target]
+    if not pd.api.types.is_numeric_dtype(y):
+        # factorize (ordered integer codes) for correlation
+        y = pd.Series(pd.factorize(y)[0], index=df.index)
+
+    corrs = {}
+    for col in df.columns:
+        if col == target:
+            continue
+        # skip identifiers just in case
+        if col in IDENTIFIER_COLS:
+            continue
+        try:
+            x = df[col]
+            if not pd.api.types.is_numeric_dtype(x):
+                # try to coerce via factorize
+                x = pd.Series(pd.factorize(x)[0], index=df.index)
+            # dropna pairwise
+            valid = x.notna() & y.notna()
+            if valid.sum() < 2:
+                corr = 0.0
+            else:
+                corr = x[valid].corr(y[valid])
+                if pd.isna(corr):
+                    corr = 0.0
+            corrs[col] = float(corr)
+        except Exception:
+            corrs[col] = 0.0
+
+    if not corrs:
+        raise ValueError('No features available to correlate with target')
+
+    corr_series = pd.Series(corrs)
+    # Sort by absolute correlation for display
+    corr_series_sorted = corr_series.reindex(corr_series.abs().sort_values(ascending=False).index)
+
+    # Plot horizontal bar chart
+    fig, ax = plt.subplots(figsize=(10, max(6, 0.3 * len(corr_series_sorted))))
+    labels = [DISPLAY_NAME_MAP.get(c, c) for c in corr_series_sorted.index]
+    ax.barh(range(len(corr_series_sorted)), corr_series_sorted.values, color='skyblue', edgecolor='black')
+    ax.set_yticks(range(len(corr_series_sorted)))
+    ax.set_yticklabels(labels)
+    ax.set_xlabel('Pearson correlation with ' + DISPLAY_NAME_MAP.get(target, target))
+    ax.set_title(f'Correlation of features with {DISPLAY_NAME_MAP.get(target, target)}')
+    ax.invert_yaxis()
+    # annotate values: try to place inside the bar when there's room,
+    # otherwise place just outside for readability
+    for i, v in enumerate(corr_series_sorted.values):
+        abs_v = abs(v)
+        # small offset for placement
+        offset = 0.01
+        inside_threshold = 0.30  # minimum bar length (in axis units) to place text inside
+        if v >= 0:
+            if abs_v > inside_threshold:
+                x = v - offset
+                ha = 'right'
+                color = 'white'
+            else:
+                x = v + offset
+                ha = 'left'
+                color = 'black'
+        else:
+            if abs_v > inside_threshold:
+                x = v + offset
+                ha = 'left'
+                color = 'white'
+            else:
+                x = v - offset
+                ha = 'right'
+                color = 'black'
+
+        ax.text(x, i, f'{v:.2f}', va='center', fontsize=9, ha=ha, color=color, clip_on=True)
+
+    plt.tight_layout()
+    if SAVE_PLOTS:
+        out = save_figure(fig, 'feature_target_correlations')
+        if SHOW_PLOTS:
+            fig.show()
+        plt.close(fig)
+        return out
+    else:
+        if SHOW_PLOTS:
+            fig.show()
+        return fig
+
+
+def plot_correlation_subplots(
+    df: pd.DataFrame,
+    target: str = 'Diagnosis',
+    per_row: int = 4,
+    max_per_image: int = 16,
+    width_per_col: float = 6.5,
+    height_per_row: float = 3.5,
+) -> list[Path] | plt.Figure:
+    """Create one or more grids of subplots showing each feature's correlation
+    vector vs the target's correlation vector.
+
+    This function will split the total set of features into multiple images if
+    there are more than `max_per_image` features. Defaults produce two images
+    of 16 plots each when 32 features exist. `width_per_col` controls the
+    per-column width in inches so each subplot can be made wider.
+    """
+    df2 = _drop_identifier_columns(df)
+
+    if target not in df2.columns:
+        raise ValueError(f'Target column not found: {target}')
+
+    corr_df_source = df2.copy()
+    if not pd.api.types.is_numeric_dtype(corr_df_source[target]):
+        corr_df_source[target] = pd.Series(pd.factorize(corr_df_source[target])[0], index=corr_df_source.index)
+
+    corr = corr_df_source.corr()
+    if target not in corr.columns:
+        raise ValueError('Target not present in correlation matrix after coercion')
+
+    # features to plot (exclude target and identifiers)
+    features = [c for c in corr.columns if c != target and c not in IDENTIFIER_COLS]
+    n_features = len(features)
+    if n_features == 0:
+        raise ValueError('No features available for correlation subplots')
+
+    # Split into chunks of up to max_per_image (e.g., 16)
+    chunks = [features[i:i + max_per_image] for i in range(0, n_features, max_per_image)]
+    saved_paths: list[Path] = []
+
+    for chunk_idx, chunk in enumerate(chunks, start=1):
+        m = len(chunk)
+        cols = min(per_row, m)
+        rows = math.ceil(m / cols)
+
+    # use provided width/height per subplot
+        fig_w = max(12, cols * width_per_col)
+        fig_h = max(4, rows * height_per_row)
+        figure = plt.figure(figsize=(fig_w, fig_h))
+
+        target_vec = corr[target].values
+        counter = 1
+        for i, feat in enumerate(chunk):
+            ax = figure.add_subplot(rows, cols, counter)
+            feat_vec = corr.loc[feat].values
+            try:
+                sns.lineplot(x=feat_vec, y=target_vec, ax=ax, color='crimson')
+            except Exception:
+                ax.plot(feat_vec, target_vec, color='crimson')
+            ax.set_title(DISPLAY_NAME_MAP.get(feat, feat), fontsize=9)
+            ax.set_xlabel('')
+            ax.set_ylabel(DISPLAY_NAME_MAP.get(target, target))
+            counter += 1
+
+        FigureTitle = 'Correlations between Features and Output'
+        figure.suptitle(FigureTitle, fontsize=16)
+        plt.tight_layout(rect=[0, 0, 1, 0.96])
+
+        if SAVE_PLOTS:
+            if len(chunks) == 1:
+                safe_name = 'correlation_subplots'
+            else:
+                safe_name = f'correlation_subplots_part{chunk_idx}'
+            out = save_figure(figure, safe_name, subfolder='correlations')
+            saved_paths.append(out)
+            if SHOW_PLOTS:
+                figure.show()
+            plt.close(figure)
+        else:
+            if SHOW_PLOTS:
+                figure.show()
+            return figure
+
+    return saved_paths
 
 
 def plot_pies(
@@ -693,6 +894,7 @@ def plot_pair_scatter(
     pairs: list[tuple[str, str]] | None = None,
     per_row: int = 2,
     sample_limit: int | None = 2000,
+    combine: bool = False,
 ) -> list[Path] | plt.Figure:
     """Create scatter plots for numeric attribute pairs.
 
@@ -770,6 +972,46 @@ def plot_pair_scatter(
     if not valid_pairs:
         raise ValueError('No valid column pairs found in dataframe for scatter plotting')
 
+    # If combine=True, create a single grid figure with all valid pairs
+    if combine:
+        n_pairs = len(valid_pairs)
+        cols = max(1, per_row)
+        rows = math.ceil(n_pairs / cols)
+        fig, axes = plt.subplots(rows, cols, figsize=(cols * COLUMN_WIDTH, max(3, rows * 3)))
+        axes_flat = axes.flatten() if hasattr(axes, 'flatten') else [axes]
+        for idx, (a, b) in enumerate(valid_pairs):
+            ax = axes_flat[idx]
+            try:
+                sns.scatterplot(data=df_plot, x=a, y=b, hue='Diagnosis' if 'Diagnosis' in df_plot.columns else None, s=20, ax=ax)
+            except Exception:
+                sns.scatterplot(data=df_plot, x=a, y=b, s=20, ax=ax)
+            ax.set_title(f'{DISPLAY_NAME_MAP.get(b,b)} vs {DISPLAY_NAME_MAP.get(a,a)}')
+            ax.set_xlabel(DISPLAY_NAME_MAP.get(a, a))
+            ax.set_ylabel(DISPLAY_NAME_MAP.get(b, b))
+            ax.tick_params(axis='x', labelsize=8)
+            for label in ax.get_xticklabels():
+                label.set_rotation(30)
+
+        # hide unused axes
+        for j in range(n_pairs, len(axes_flat)):
+            try:
+                axes_flat[j].set_visible(False)
+            except Exception:
+                pass
+
+        plt.tight_layout()
+        safe_name = 'scatter_all'
+        if SAVE_PLOTS:
+            out = save_figure(fig, safe_name, subfolder='scatter')
+            if SHOW_PLOTS:
+                fig.show()
+            plt.close(fig)
+            return [out]
+        else:
+            if SHOW_PLOTS:
+                fig.show()
+            return fig
+
     written: list[Path] = []
     # Create and save each pair as a separate figure in its own folder
     for a, b in valid_pairs:
@@ -798,7 +1040,8 @@ def plot_mmse_box_by_diagnosis(
     pairs: list[tuple[str, str]] | None = None,
     per_row: int = 2,
     sample_limit: int | None = 2000,
-) -> list[Path]:
+    combine: bool = False,
+) -> list[Path] | plt.Figure:
     """Create box plots for requested categorical vs numeric pairs.
 
     Default pairs (from user request) include cognitive, cardiovascular, and lifestyle comparisons.
@@ -841,6 +1084,55 @@ def plot_mmse_box_by_diagnosis(
     if not valid_pairs:
         return []
 
+    # If combine=True, build a single grid figure containing all valid pairs
+    if combine:
+        n_pairs = len(valid_pairs)
+        cols = max(1, per_row)
+        rows = math.ceil(n_pairs / cols)
+        fig, axes = plt.subplots(rows, cols, figsize=(cols * COLUMN_WIDTH, max(3, rows * 3)))
+        axes_flat = axes.flatten() if hasattr(axes, 'flatten') else [axes]
+        for idx, (x, y) in enumerate(valid_pairs):
+            ax = axes_flat[idx]
+            try:
+                sns.boxplot(data=df_plot, x=x, y=y, color='skyblue', ax=ax)
+            except Exception:
+                try:
+                    sns.violinplot(data=df_plot, x=x, y=y, ax=ax)
+                except Exception:
+                    ax.set_visible(False)
+                    continue
+
+            display_x = DISPLAY_NAME_MAP.get(x, x)
+            display_y = DISPLAY_NAME_MAP.get(y, y)
+            ax.set_title(f'{display_y} by {display_x}', fontsize=10)
+            ax.set_xlabel(display_x)
+            ax.set_ylabel(display_y)
+            ax.tick_params(axis='x', labelsize=8)
+            for label in ax.get_xticklabels():
+                label.set_rotation(30)
+
+        # hide any unused axes
+        for j in range(n_pairs, len(axes_flat)):
+            try:
+                axes_flat[j].set_visible(False)
+            except Exception:
+                pass
+
+        plt.tight_layout()
+        safe_name = 'box_all'
+        if SAVE_PLOTS:
+            out = save_figure(fig, safe_name, subfolder='box')
+            written.append(out)
+            if SHOW_PLOTS:
+                fig.show()
+            plt.close(fig)
+            return written
+        else:
+            if SHOW_PLOTS:
+                fig.show()
+            return fig
+
+    # default per-pair behavior (as before)
     for x, y in valid_pairs:
         fig, ax = plt.subplots(figsize=(SINGLE_PLOT_WIDTH, 6))
         try:
@@ -1099,6 +1391,18 @@ def main():
         print('correlation heatmap failed:', exc)
 
     try:
+        # Single plot showing correlations of each feature with Diagnosis
+        plot_feature_target_correlations(df, target='Diagnosis')
+    except Exception as exc:
+        print('feature-target correlation plot failed:', exc)
+
+    # also create the correlation subplots grid (split into two images if many features)
+    try:
+        plot_correlation_subplots(df, target='Diagnosis', per_row=4, max_per_image=16, width_per_col=8.0, height_per_row=4.0)
+    except Exception as exc:
+        print('correlation subplots failed:', exc)
+
+    try:
         # produce pies: categorical and binned numerical (uses loaded df)
         plot_pies(df, target='ALL')
     except Exception as exc:
@@ -1138,10 +1442,22 @@ def main():
     except Exception as exc:
         print('age vs mmse scatter failed:', exc)
 
+    # Also save a combined scatter grid containing all valid pairs (single image)
+    try:
+        plot_pair_scatter(df, combine=True, per_row=4, sample_limit=2000)
+    except Exception as exc:
+        print('combined scatter plot failed:', exc)
+
     try:
         plot_mmse_box_by_diagnosis(df)
     except Exception as exc:
         print('mmse boxplot failed:', exc)
+
+    # also produce a combined grid of box/violin plots in one image
+    try:
+        plot_mmse_box_by_diagnosis(df, combine=True, per_row=3, sample_limit=2000)
+    except Exception as exc:
+        print('combined box plot failed:', exc)
 
     try:
         plot_violin_box_pairs(df)
