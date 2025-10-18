@@ -358,13 +358,9 @@ def plot_missing_values(df: pd.DataFrame) -> plt.Figure:
 
 
 def plot_duplicate_values(df: pd.DataFrame) -> plt.Figure:
-    """Plot counts of duplicate values per column.
-
-    For each column this computes: duplicate_count = total_rows - nunique(dropna=True).
-    Columns with zero duplicate entries are omitted from the plot.
+    """Plot counts of duplicate values per row.
+    plot counts of those duplicate row groups instead of per-column duplicates.
     """
-    # New behavior: detect duplicate rows (identical full-row records) and
-    # plot counts of those duplicate row groups instead of per-column duplicates.
     df = _drop_identifier_columns(df)
     if df is None or df.shape[0] == 0:
         fig, ax = plt.subplots(figsize=(8, 3))
