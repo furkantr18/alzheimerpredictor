@@ -68,22 +68,205 @@ Our methodology follows a standard data science pipeline:
 
 To run this project locally, follow the steps below.
 
+### Prerequisites
+- Python 3.9 or higher
+- pip (Python package installer)
+
+### Installation Steps
+
 **1. Clone the repository:**
 ```bash
-git clone [https://github.com/your-username/your-repository-name.git](https://github.com/your-username/your-repository-name.git)
+git clone https://github.com/your-username/your-repository-name.git
 cd your-repository-name
 ```
 
 **2. Install the required dependencies:**
+
+The project requires several Python packages listed in `requirements.txt`. Install them using:
+
 ```bash
 pip install -r requirements.txt
 ```
 
-**3. Launch Jupyter Notebook:**
+This will install all necessary packages including:
+- pandas, numpy (data processing)
+- scikit-learn (machine learning models)
+- xgboost, lightgbm, catboost (gradient boosting models)
+- matplotlib, seaborn (visualization)
+- shap, lime (model explainability)
+- fastapi (API deployment)
+
+**3. Run the model training pipeline:**
+
+To train all models and generate evaluation reports:
+
+```bash
+python src/model\ training/model_trainer.py
+```
+
+Or navigate to the directory:
+```bash
+cd "src/model training"
+python model_trainer.py
+```
+
+**4. Launch Jupyter Notebook (optional):**
+
+For interactive data exploration:
 ```bash
 jupyter notebook
 ```
 Open the main notebook file to explore the analysis and models.
+
+## 🔮 Making Predictions
+
+After training the models, you can use the prediction script to classify new patient data and get risk assessments.
+
+### Interactive Mode (Manual Input)
+
+Enter patient data manually and get instant predictions:
+
+```bash
+python src/predict.py --interactive
+```
+
+You'll be prompted to enter values for each feature, with helpful ranges and averages displayed.
+
+### Single Patient Prediction
+
+Predict for a single patient from a CSV file:
+
+```bash
+python src/predict.py --patient path/to/patient_data.csv
+```
+
+### Batch Prediction (Multiple Patients)
+
+Process multiple patients at once and save results:
+
+```bash
+python src/predict.py --batch path/to/patients.csv --output predictions.csv
+```
+
+### Use Specific Model
+
+By default, the best-performing model is used. To use a specific model:
+
+```bash
+python src/predict.py --interactive --model "src/model training/output/trained_models/xgboost.pkl"
+```
+
+### Prediction Output
+
+The prediction system provides comprehensive results:
+
+- **🔍 Diagnosis**: Cognitive Normal (CN) or Alzheimer's Disease (AD)
+- **📊 Confidence Score**: Probability percentage (0-100%)
+- **📈 Probability Breakdown**: Visual bars showing probabilities for each class
+- **💡 Risk Interpretation**: HIGH/MODERATE/LOW risk assessment with medical recommendations
+
+**Example Output:**
+
+```
+======================================================================
+PREDICTION RESULT
+======================================================================
+
+🔍 Diagnosis: Alzheimer's Disease
+📊 Confidence Score: 87.32%
+
+📈 Probability Breakdown:
+  Cognitive Normal               ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░ 12.68%
+  Alzheimer's Disease            ████████████████████████████████████░░░░ 87.32%
+
+💡 Interpretation:
+  ⚠️  HIGH RISK: Strong indicators of Alzheimer's disease detected.
+     Recommendation: Consult with a neurologist immediately.
+
+======================================================================
+⚕️  DISCLAIMER: This is a predictive model and NOT a medical diagnosis.
+   Always consult with qualified healthcare professionals.
+======================================================================
+```
+
+### Input Data Format
+
+For batch predictions, your CSV file should contain the same features as the training data:
+
+```csv
+PatientID,Age,Gender,Ethnicity,EducationLevel,BMI,Smoking,AlcoholConsumption,...
+P001,0.65,1,0,0.67,0.42,0,0.5,...
+P002,0.82,0,1,0.33,0.38,1,0.3,...
+```
+
+⚕️ **IMPORTANT DISCLAIMER**: This prediction tool is for research and educational purposes. It provides risk assessments based on machine learning models and should NOT be used as a substitute for professional medical diagnosis. Always consult with qualified healthcare professionals for medical advice.
+
+## 🤖 Model Selection & Feature Engineering
+
+### Machine Learning Models
+
+We employ a comprehensive ensemble of models to capture different aspects of the data:
+
+#### **Traditional Models**
+- **Logistic Regression (LR):** Simple, interpretable baseline for binary classification
+- **Support Vector Machine (SVM):** Effective for high-dimensional features with kernel tricks
+- **K-Nearest Neighbors (KNN):** Intuitive, instance-based model for pattern recognition
+- **Gaussian Naive Bayes:** Probabilistic classifier based on Bayes' theorem
+
+#### **Tree-Based Ensemble Models**
+- **Decision Trees:** Interpretable decision rules for classification
+- **Random Forest (RF):** Ensemble of decision trees to capture non-linear relationships
+- **XGBoost:** Gradient boosting with regularization for strong tabular performance
+- **LightGBM:** Fast gradient boosting with leaf-wise tree growth
+- **CatBoost:** Gradient boosting optimized for categorical features
+
+#### **Advanced Ensemble**
+- **Stacking Ensemble:** Meta-learner combining predictions from multiple base models
+
+### Feature Engineering Pipeline
+
+Our feature engineering process includes:
+
+1. **Feature Selection:** 
+   - Identify and select relevant features based on domain knowledge and statistical tests
+   - Remove non-predictive identifiers (e.g., PatientID)
+
+2. **Data Quality:**
+   - Handle missing values using appropriate imputation strategies
+   - Detect and handle outliers using IQR-based methods
+   
+3. **Feature Transformation:**
+   - Encode categorical variables (Label/One-Hot encoding)
+   - Normalize/scale numerical features (StandardScaler/RobustScaler)
+
+4. **Feature Importance:**
+   - Analyze feature contributions using SHAP and LIME
+   - Visualize model interpretability and decision-making
+
+### Hyperparameter Tuning
+
+We optimize model performance through systematic hyperparameter search:
+
+- **Random Forest:** Number of trees, max depth, min samples split
+- **XGBoost/LightGBM/CatBoost:** Learning rate, max depth, subsample ratio, regularization
+- **SVM:** Kernel type, C (regularization), gamma
+- **Search Strategy:** Randomized search with cross-validation
+
+### Model Evaluation
+
+#### Cross-Validation Strategy
+- **5-Fold Stratified Cross-Validation** to ensure robust performance estimates
+- Prevents overfitting and validates generalization to unseen data
+
+#### Performance Metrics
+- **Accuracy:** Overall classification correctness
+- **F1-Score:** Harmonic mean of precision and recall (weighted for multiclass)
+- **ROC-AUC:** Area under the receiver operating characteristic curve
+- **Confusion Matrix:** Detailed breakdown of predictions vs. actual labels
+
+#### Model Explainability
+- **SHAP (SHapley Additive exPlanations):** Global feature importance
+- **LIME (Local Interpretable Model-agnostic Explanations):** Instance-level predictions
 
 ## 📚 References
 
