@@ -39,6 +39,7 @@ from sklearn.neighbors import KNeighborsClassifier
 from sklearn.naive_bayes import GaussianNB
 from sklearn.tree import DecisionTreeClassifier
 from sklearn.ensemble import RandomForestClassifier, StackingClassifier, VotingClassifier
+from sklearn.neural_network import MLPClassifier
 
 # Gradient boosting imports
 from xgboost import XGBClassifier
@@ -165,7 +166,8 @@ class AlzheimerModelTrainer:
         self.output_dir.mkdir(parents=True, exist_ok=True)
         
         # Initialize log file for output
-        self.log_file_path = self.output_dir / f'training_log_{datetime.now().strftime("%Y%m%d_%H%M%S")}.txt'
+        # Use a fixed filename for the training log instead of timestamped names
+        self.log_file_path = self.output_dir / 'training_output.txt'
         self.tee_output = None
         
         print(f"[INFO] AlzheimerModelTrainer initialized with random_state={random_state}")
@@ -873,6 +875,79 @@ class AlzheimerModelTrainer:
         print("[SUCCESS] Random Forest training completed.")
     
     
+    def train_mlp(self, tune_hyperparameters=True):
+        """
+        Train Multi-Layer Perceptron (Neural Network) classifier with optional hyperparameter tuning.
+        
+        Parameters:
+        -----------
+        tune_hyperparameters : bool
+            Whether to perform hyperparameter tuning (default: True)
+        """
+        print("\n" + "-"*70)
+        print("[MODEL] Training MLP (Neural Network)")
+        print("-"*70)
+
+        if tune_hyperparameters:
+            # Define reasonable hyperparameter distributions
+            param_dist = {
+                'hidden_layer_sizes': [(64,), (128,), (64, 32), (128, 64), (128, 64, 32)],
+                'activation': ['relu', 'tanh'],
+                'alpha': [1e-5, 1e-4, 1e-3, 1e-2],
+                'learning_rate_init': [1e-3, 5e-4, 1e-4],
+                'batch_size': [32, 64, 128]
+            }
+
+            # Randomized search (MLP can be slow; keep iterations modest)
+            base = MLPClassifier(
+                solver='adam',
+                early_stopping=True,
+                n_iter_no_change=20,
+                max_iter=500,
+                random_state=self.random_state
+            )
+
+            random_search = RandomizedSearchCV(
+                base,
+                param_distributions=param_dist,
+                n_iter=20,
+                cv=5,
+                scoring='f1_weighted',
+                n_jobs=-1,
+                verbose=1,
+                random_state=self.random_state
+            )
+
+            random_search.fit(self.X_train, self.y_train)
+            best_model = random_search.best_estimator_
+
+            print(f"[INFO] Best parameters: {random_search.best_params_}")
+            print(f"[INFO] Best CV score: {random_search.best_score_:.4f}")
+        else:
+            # Reasonable defaults
+            best_model = MLPClassifier(
+                hidden_layer_sizes=(128, 64),
+                activation='relu',
+                solver='adam',
+                alpha=1e-4,
+                learning_rate_init=1e-3,
+                batch_size=64,
+                early_stopping=True,
+                n_iter_no_change=20,
+                max_iter=500,
+                random_state=self.random_state
+            )
+            best_model.fit(self.X_train, self.y_train)
+
+        # Store the trained model
+        self.trained_models['MLP'] = best_model
+
+        # Evaluate the model
+        self._evaluate_model('MLP', best_model)
+
+        print("[SUCCESS] MLP training completed.")
+
+    
     def train_xgboost(self, tune_hyperparameters=True):
         """
         Train XGBoost model with optional hyperparameter tuning.
@@ -1489,32 +1564,52 @@ class AlzheimerModelTrainer:
             DataFrame containing model comparison metrics
         """
         fig, axes = plt.subplots(1, 3, figsize=(18, 5))
-        
-        # Plot 1: Test Accuracy
+
+        def _smart_xlim(ax, series, pad=0.02, min_span=0.05):
+            s = series.dropna()
+            if s.empty:
+                return
+            vmin, vmax = float(s.min()), float(s.max())
+            span = vmax - vmin
+            if span < min_span:
+                # Ensure a minimum span to make differences visible
+                center = (vmin + vmax) / 2.0
+                half = max(min_span / 2.0, 0.01)
+                vmin, vmax = center - half, center + half
+            vmin = max(0.0, vmin - pad)
+            vmax = min(1.0, vmax + pad)
+            if vmin >= vmax:
+                vmax = vmin + 0.1
+            ax.set_xlim([vmin, vmax])
+
+        # Plot 1: Test Accuracy (auto-zoom x-axis for sensitivity)
         axes[0].barh(comparison_df['Model'], comparison_df['Test Accuracy'], color='skyblue')
         axes[0].set_xlabel('Accuracy', fontsize=12)
         axes[0].set_title('Test Set Accuracy', fontsize=14, fontweight='bold')
-        axes[0].set_xlim([0, 1])
-        
-        # Plot 2: Test F1-Score
+        _smart_xlim(axes[0], comparison_df['Test Accuracy'])
+        axes[0].grid(axis='x', linestyle='--', alpha=0.4)
+
+        # Plot 2: Test F1-Score (auto-zoom x-axis for sensitivity)
         axes[1].barh(comparison_df['Model'], comparison_df['Test F1-Score'], color='lightcoral')
         axes[1].set_xlabel('F1-Score', fontsize=12)
         axes[1].set_title('Test Set F1-Score', fontsize=14, fontweight='bold')
-        axes[1].set_xlim([0, 1])
-        
-        # Plot 3: Test ROC-AUC
+        _smart_xlim(axes[1], comparison_df['Test F1-Score'])
+        axes[1].grid(axis='x', linestyle='--', alpha=0.4)
+
+        # Plot 3: Test ROC-AUC (auto-zoom x-axis for sensitivity)
         if not comparison_df['Test ROC-AUC'].isna().all():
             axes[2].barh(comparison_df['Model'], comparison_df['Test ROC-AUC'], color='lightgreen')
             axes[2].set_xlabel('ROC-AUC', fontsize=12)
             axes[2].set_title('Test Set ROC-AUC', fontsize=14, fontweight='bold')
-            axes[2].set_xlim([0, 1])
+            _smart_xlim(axes[2], comparison_df['Test ROC-AUC'])
+            axes[2].grid(axis='x', linestyle='--', alpha=0.4)
         else:
             axes[2].text(0.5, 0.5, 'ROC-AUC Not Available', 
                         ha='center', va='center', fontsize=14)
             axes[2].set_title('Test Set ROC-AUC', fontsize=14, fontweight='bold')
-        
+
         plt.tight_layout()
-        
+
         # Save figure
         output_path = self.output_dir / 'model_comparison.png'
         plt.savefig(output_path, dpi=300, bbox_inches='tight')
@@ -1635,6 +1730,7 @@ class AlzheimerModelTrainer:
             self.train_naive_bayes()
             self.train_decision_tree(tune_hyperparameters=tune_hyperparameters)
             self.train_random_forest(tune_hyperparameters=tune_hyperparameters)
+            self.train_mlp(tune_hyperparameters=tune_hyperparameters)
             self.train_xgboost(tune_hyperparameters=tune_hyperparameters)
             self.train_lightgbm(tune_hyperparameters=tune_hyperparameters)
             self.train_catboost(tune_hyperparameters=tune_hyperparameters)
