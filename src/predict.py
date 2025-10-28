@@ -25,10 +25,11 @@ import json
 from pathlib import Path
 import sys
 import os
+import sqlite3
 
 # Add parent directory to path for config import
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from config import BEST_MODEL_PATH, PROCESSED_DATA_PATH
+from config import BEST_MODEL_PATH, PROCESSED_DATA_PATH, PREDICTIONS_DIR, DEFAULT_BATCH_PREDICTIONS_CSV
 
 
 class AlzheimerPredictor:
@@ -127,6 +128,50 @@ class AlzheimerPredictor:
         
         return data
     
+    def _post_normalization_pipeline(self, data: pd.DataFrame) -> np.ndarray:
+        """
+        Apply steps after normalization: drop IDs, encode categoricals (if any),
+        ensure feature order, and apply the saved scaler.
+
+        Parameters:
+        -----------
+        data : pd.DataFrame
+            Normalized data.
+
+        Returns:
+        --------
+        np.ndarray
+            Scaled feature matrix ready for the model.
+        """
+        df = data.copy()
+
+        # Drop non-predictive ID columns if present
+        id_columns = ['PatientID', 'DoctorInCharge', 'Diagnosis']
+        for col in id_columns:
+            if col in df.columns:
+                df = df.drop(columns=[col])
+
+        # Encode categorical features using saved label encoders (if any)
+        for col, encoder in self.label_encoders.items():
+            if col != 'target' and col in df.columns:
+                try:
+                    df[col] = encoder.transform(df[col].astype(str))
+                except ValueError:
+                    # Unknown category -> fallback to first known class
+                    df[col] = encoder.transform([encoder.classes_[0]])[0]
+
+        # Ensure all expected features exist
+        missing_features = set(self.feature_names) - set(df.columns)
+        for feature in missing_features:
+            df[feature] = 0
+
+        # Order columns
+        df = df[self.feature_names]
+
+        # Apply scaler
+        X = self.scaler.transform(df)
+        return X
+
     
     def preprocess_input(self, patient_data):
         """
@@ -150,45 +195,11 @@ class AlzheimerPredictor:
         data = patient_data.copy()
         
         print("[INFO] Step 1: Normalizing test data...")
-        # First, normalize the raw data using the same parameters as training
-        data = self.normalize_test_data(data)
-        
-        print("[INFO] Step 2: Dropping non-predictive columns...")
-        # Drop non-predictive ID columns if present
-        id_columns = ['PatientID', 'DoctorInCharge', 'Diagnosis']
-        for col in id_columns:
-            if col in data.columns:
-                print(f"[INFO]   - Dropping column: {col}")
-                data = data.drop(columns=[col])
-        
-        # Encode categorical features using saved label encoders
-        for col, encoder in self.label_encoders.items():
-            if col != 'target' and col in data.columns:
-                try:
-                    data[col] = encoder.transform(data[col].astype(str))
-                except ValueError as e:
-                    print(f"[WARNING] Unknown category in {col}: {e}")
-                    # Handle unknown categories by using the most frequent class
-                    data[col] = encoder.transform([encoder.classes_[0]])[0]
-        
-        # Ensure all expected features are present
-        missing_features = set(self.feature_names) - set(data.columns)
-        if missing_features:
-            print(f"[WARNING] Missing features: {missing_features}")
-            print("[INFO] Setting missing features to 0")
-            for feature in missing_features:
-                data[feature] = 0
-        
-        print("[INFO] Step 3: Selecting and ordering features to match training...")
-        # Select and order features to match training
-        data = data[self.feature_names]
-        
-        print("[INFO] Step 4: Applying scaler transformation...")
-        # Scale features using the saved scaler
-        scaled_data = self.scaler.transform(data)
-        
+        data_norm = self.normalize_test_data(data)
+        print("[INFO] Step 2-4: Dropping IDs, ordering features, scaling...")
+        X = self._post_normalization_pipeline(data_norm)
         print("[INFO] Preprocessing complete!")
-        return scaled_data
+        return X
     
     
     def predict(self, patient_data, return_probabilities=True):
@@ -239,7 +250,7 @@ class AlzheimerPredictor:
         return result
     
     
-    def predict_batch(self, patient_data_path, output_path=None):
+    def predict_batch(self, patient_data_path, output_path=None, threshold: float = 0.5, save_normalized: str | None = None, save_sqlite: str | None = None, min_confidence: float = 0.1):
         """
         Make predictions for multiple patients from a CSV file.
         
@@ -263,23 +274,144 @@ class AlzheimerPredictor:
         # Store patient IDs if present
         patient_ids = df['PatientID'].tolist() if 'PatientID' in df.columns else list(range(len(df)))
         
-        # Make predictions for each patient
-        results = []
-        for idx, row in df.iterrows():
-            try:
-                result = self.predict(row.to_dict(), return_probabilities=True)
-                result['PatientID'] = patient_ids[idx]
-                results.append(result)
-            except Exception as e:
-                print(f"[WARNING] Failed to predict for patient {patient_ids[idx]}: {e}")
-                results.append({
+        # Preprocess all patients at once (more efficient)
+        try:
+            # Normalize once so we can optionally persist normalized data
+            df_norm = self.normalize_test_data(df)
+
+            # Optionally save normalized data to CSV
+            if save_normalized:
+                out_csv = Path(save_normalized)
+                out_csv.parent.mkdir(parents=True, exist_ok=True)
+                df_norm.to_csv(out_csv, index=False)
+                print(f"[SUCCESS] Normalized test data saved to CSV: {out_csv}")
+
+            # Optionally save normalized data to SQLite
+            if save_sqlite:
+                db_path = Path(save_sqlite)
+                db_path.parent.mkdir(parents=True, exist_ok=True)
+                with sqlite3.connect(db_path) as conn:
+                    df_norm.to_sql('normalized_test', conn, if_exists='replace', index=False)
+                print(f"[SUCCESS] Normalized test data saved to SQLite table 'normalized_test' in: {db_path}")
+
+            # Continue with post-normalization pipeline
+            X = self._post_normalization_pipeline(df_norm)
+            
+            # Make predictions for all patients
+            if hasattr(self.model, 'predict_proba'):
+                proba_all = self.model.predict_proba(X)
+                # Determine index of Alzheimer's class
+                if isinstance(self.diagnosis_classes, (list, np.ndarray)) and len(self.diagnosis_classes) == 2:
+                    try:
+                        ad_index = list(self.diagnosis_classes).index("Alzheimer's Disease")
+                    except ValueError:
+                        # Fallback assume positive class is 1
+                        ad_index = 1
+                else:
+                    ad_index = 1
+                # Apply configurable threshold on Alzheimer's probability
+                predictions = (proba_all[:, ad_index] >= float(threshold)).astype(int)
+            else:
+                predictions = self.model.predict(X)
+            
+            # Get probabilities if available
+            probabilities = None
+            if hasattr(self.model, 'predict_proba'):
+                probabilities = proba_all
+            
+            # Build results
+            results = []
+            for idx, pred in enumerate(predictions):
+                diagnosis = self.diagnosis_classes[pred]
+                result = {
                     'PatientID': patient_ids[idx],
-                    'diagnosis': 'ERROR',
-                    'error': str(e)
-                })
+                    'diagnosis': diagnosis,
+                    'prediction_code': int(pred),
+                }
+                
+                if probabilities is not None:
+                    proba = probabilities[idx]
+                    # Pull Alzheimer's probability consistently
+                    try:
+                        ad_index
+                    except NameError:
+                        # Determine Alzheimer's index if not set (should be set earlier)
+                        try:
+                            ad_index = list(self.diagnosis_classes).index("Alzheimer's Disease")
+                        except Exception:
+                            ad_index = 1
+                    ad_proba = float(proba[ad_index])
+                    result['risk_score'] = float(proba[pred])
+                    result['prob_ad'] = ad_proba
+                    # Confidence margin from 0.5 boundary
+                    result['margin'] = abs(ad_proba - 0.5)
+                    result['uncertain'] = result['margin'] < float(min_confidence)
+                    result['probabilities'] = {
+                        class_name: float(prob) 
+                        for class_name, prob in zip(self.diagnosis_classes, proba)
+                    }
+                else:
+                    result['risk_score'] = None
+                    result['probabilities'] = None
+                    result['prob_ad'] = None
+                    result['margin'] = None
+                    result['uncertain'] = None
+                
+                results.append(result)
+                
+        except Exception as e:
+            print(f"[ERROR] Batch prediction failed: {e}")
+            import traceback
+            traceback.print_exc()
+            raise
         
         # Create results DataFrame
         results_df = pd.DataFrame(results)
+
+        # If ground truth labels exist, compute evaluation metrics and include them
+        if 'Diagnosis' in df.columns:
+            try:
+                from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, confusion_matrix, classification_report
+                y_true = df['Diagnosis'].astype(int).to_numpy()
+                y_pred = results_df['prediction_code'].astype(int).to_numpy()
+
+                acc = accuracy_score(y_true, y_pred)
+                prec = precision_score(y_true, y_pred, zero_division=0)
+                rec = recall_score(y_true, y_pred, zero_division=0)
+                f1 = f1_score(y_true, y_pred, zero_division=0)
+                cm = confusion_matrix(y_true, y_pred)
+
+                # Attach ground truth for saved CSV
+                results_df.insert(1, 'y_true', y_true)
+
+                print("\n" + "="*70)
+                print("EVALUATION (from predict.py - using provided Diagnosis column)")
+                print("="*70)
+                print(f"Accuracy : {acc:.4f}")
+                print(f"Precision: {prec:.4f}")
+                print(f"Recall   : {rec:.4f}")
+                print(f"F1-score : {f1:.4f}")
+                print("Confusion Matrix [ [TN FP] [FN TP] ]:")
+                print(cm)
+
+                print("\nCLASSIFICATION REPORT:")
+                print(classification_report(y_true, y_pred, target_names=["Cognitive Normal", "Alzheimer's Disease"]))
+
+                # If probabilities available, suggest threshold by quick sweep for F1
+                if 'prob_ad' in results_df.columns and results_df['prob_ad'].notnull().all():
+                    sweep = [0.30, 0.35, 0.40, 0.45, 0.50, 0.55]
+                    best_t, best_f1 = None, -1
+                    print("\nTHRESHOLD SWEEP (F1 on provided batch):")
+                    for t in sweep:
+                        y_pred_s = (results_df['prob_ad'].to_numpy() >= t).astype(int)
+                        f1s = f1_score(y_true, y_pred_s, zero_division=0)
+                        print(f"  t={t:.2f} -> F1={f1s:.3f}")
+                        if f1s > best_f1:
+                            best_f1, best_t = f1s, t
+                    if best_t is not None:
+                        print(f"Suggested threshold on this batch: {best_t:.2f} (F1={best_f1:.3f}). Use --threshold {best_t:.2f} to apply.")
+            except Exception as e:
+                print(f"[WARNING] Could not compute evaluation metrics: {e}")
         
         # Reorder columns
         cols = ['PatientID', 'diagnosis', 'prediction_code', 'risk_score']
@@ -287,17 +419,32 @@ class AlzheimerPredictor:
             # Expand probabilities into separate columns
             prob_df = pd.DataFrame(results_df['probabilities'].tolist())
             prob_df.columns = [f'prob_{col}' for col in prob_df.columns]
-            results_df = pd.concat([results_df[cols], prob_df], axis=1)
+            # Keep additional diagnostics if present
+            extra_cols = []
+            for c in ['prob_ad', 'margin', 'uncertain']:
+                if c in results_df.columns:
+                    extra_cols.append(c)
+            results_df = pd.concat([results_df[cols + extra_cols], prob_df], axis=1)
         
-        # Save or print results
-        if output_path:
-            results_df.to_csv(output_path, index=False)
-            print(f"[SUCCESS] Predictions saved to: {output_path}")
-        else:
-            print("\n" + "="*70)
-            print("BATCH PREDICTION RESULTS")
-            print("="*70)
-            print(results_df.to_string(index=False))
+        # Determine default output path if not provided
+        save_path = output_path
+        if not save_path:
+            # Ensure directory exists
+            os.makedirs(PREDICTIONS_DIR, exist_ok=True)
+            save_path = DEFAULT_BATCH_PREDICTIONS_CSV
+
+        # Save results always, and also print a compact view
+        try:
+            results_df.to_csv(save_path, index=False)
+            print(f"[SUCCESS] Predictions saved to: {save_path}")
+        except Exception as e:
+            print(f"[ERROR] Failed to save predictions to {save_path}: {e}")
+
+        # Print a readable summary to console
+        print("\n" + "="*70)
+        print("BATCH PREDICTION RESULTS")
+        print("="*70)
+        print(results_df.to_string(index=False))
         
         return results_df
     
@@ -442,6 +589,14 @@ Examples:
                        help='Path to CSV file with multiple patients')
     parser.add_argument('--output', '-o', type=str,
                        help='Output path for batch predictions (CSV format)')
+    parser.add_argument('--threshold', '-t', type=float, default=0.5,
+                       help='Probability threshold for Alzheimer class when model supports predict_proba (default: 0.5)')
+    parser.add_argument('--save-normalized', type=str,
+                       help='Optional path to save normalized test data (CSV)')
+    parser.add_argument('--save-sqlite', type=str,
+                       help="Optional path to a SQLite DB file to save normalized test data in table 'normalized_test'")
+    parser.add_argument('--min-confidence', type=float, default=0.1,
+                       help='Mark predictions as uncertain when |p(AD)-0.5| < min-confidence (default: 0.1)')
     parser.add_argument('--model', '-m', type=str,
                        help='Path to specific model file (default: best_model.pkl)')
     
@@ -462,7 +617,14 @@ Examples:
             result = predictor.predict(args.patient, return_probabilities=True)
             predictor._display_result(result)
         elif args.batch:
-            predictor.predict_batch(args.batch, output_path=args.output)
+            predictor.predict_batch(
+                args.batch,
+                output_path=args.output,
+                threshold=args.threshold,
+                save_normalized=args.save_normalized,
+                save_sqlite=args.save_sqlite,
+                min_confidence=args.min_confidence,
+            )
         else:
             print("[ERROR] Please specify a prediction mode:")
             print("  --interactive  : Enter patient data manually")
