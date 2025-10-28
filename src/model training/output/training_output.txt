@@ -2,8 +2,8 @@
 ======================================================================
 ALZHEIMER'S DISEASE PREDICTION - MODEL TRAINING PIPELINE
 ======================================================================
-Start time: 2025-10-18 19:29:35
-Log file: src\model training\output\training_log_20251018_192935.txt
+Start time: 2025-10-28 15:47:43
+Log file: src\model training\output\training_output.txt
 
 ======================================================================
 [STEP 1] Loading Data
@@ -296,6 +296,42 @@ Random Forest - 5-Fold Cross-Validation:
 [SUCCESS] Random Forest training completed.
 
 ----------------------------------------------------------------------
+[MODEL] Training MLP (Neural Network)
+----------------------------------------------------------------------
+Fitting 5 folds for each of 20 candidates, totalling 100 fits
+[INFO] Best parameters: {'learning_rate_init': 0.001, 'hidden_layer_sizes': (64, 32), 'batch_size': 128, 'alpha': 0.001, 'activation': 'relu'}
+[INFO] Best CV score: 0.7591
+
+[EVALUATION] Evaluating MLP...
+
+==================================================
+MLP - Test Set Performance:
+==================================================
+  Accuracy:  0.7860
+  F1-Score:  0.7798
+  ROC-AUC:   0.8189
+
+MLP - 5-Fold Cross-Validation:
+==================================================
+  Accuracy:  0.7673 (+/- 0.0161)
+  F1-Score:  0.7591 (+/- 0.0171)
+==================================================
+
+[INFO] Confusion matrix plot saved to: src\model training\output\plots\mlp\confusion_matrix.png
+[INFO] ROC curve plot saved to: src\model training\output\plots\mlp\roc_curve.png
+[INFO] SHAP summary plot saved to: src\model training\output\plots\mlp\shap_summary.png
+[INFO] LIME explanation plot saved to: src\model training\output\plots\mlp\lime_explanation_1.png
+[INFO] LIME explanation plot saved to: src\model training\output\plots\mlp\lime_explanation_2.png
+[INFO] LIME explanation plot saved to: src\model training\output\plots\mlp\lime_explanation_3.png
+[INFO] Confusion matrix plot saved to: src\model training\output\plots\mlp\confusion_matrix.png
+[INFO] ROC curve plot saved to: src\model training\output\plots\mlp\roc_curve.png
+[INFO] Confusion matrix plot saved to: src\model training\output\plots\mlp\confusion_matrix.png
+[INFO] ROC curve plot saved to: src\model training\output\plots\mlp\roc_curve.png
+[INFO] Confusion matrix plot saved to: src\model training\output\plots\mlp\confusion_matrix.png
+[INFO] ROC curve plot saved to: src\model training\output\plots\mlp\roc_curve.png
+[SUCCESS] MLP training completed.
+
+----------------------------------------------------------------------
 [MODEL] Training XGBoost
 ----------------------------------------------------------------------
 Fitting 5 folds for each of 30 candidates, totalling 150 fits
@@ -452,6 +488,7 @@ Stacking Ensemble - 5-Fold Cross-Validation:
         Naive Bayes       0.804651       0.797980      0.849773          0.7737±0.0207          0.7656±0.0214
 Logistic Regression       0.800000       0.795115      0.841182          0.7720±0.0241          0.7667±0.0240
                 SVM       0.797674       0.791024      0.835136          0.7615±0.0188          0.7533±0.0185
+                MLP       0.786047       0.779810      0.818890          0.7673±0.0161          0.7591±0.0171
                 KNN       0.737209       0.719105      0.792621          0.7475±0.0150          0.7274±0.0211
 
 [BEST MODEL] CatBoost
@@ -472,6 +509,7 @@ Logistic Regression       0.800000       0.795115      0.841182          0.7720�
 [SUCCESS] Naive Bayes saved to: src\model training\output\trained_models\naive_bayes.pkl
 [SUCCESS] Decision Tree saved to: src\model training\output\trained_models\decision_tree.pkl
 [SUCCESS] Random Forest saved to: src\model training\output\trained_models\random_forest.pkl
+[SUCCESS] MLP saved to: src\model training\output\trained_models\mlp.pkl
 [SUCCESS] XGBoost saved to: src\model training\output\trained_models\xgboost.pkl
 [SUCCESS] LightGBM saved to: src\model training\output\trained_models\lightgbm.pkl
 [SUCCESS] CatBoost saved to: src\model training\output\trained_models\catboost.pkl
@@ -482,6 +520,6 @@ Logistic Regression       0.800000       0.795115      0.841182          0.7720�
 ======================================================================
 [COMPLETED] Pipeline Execution Completed Successfully!
 ======================================================================
-End time: 2025-10-18 19:44:39
+End time: 2025-10-28 16:01:02
 
-[INFO] Complete log saved to: src\model training\output\training_log_20251018_192935.txt
+[INFO] Complete log saved to: src\model training\output\training_output.txt
