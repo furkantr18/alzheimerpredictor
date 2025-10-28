@@ -73,6 +73,12 @@ class AlzheimerPredictor:
             self.feature_names = preprocessing['feature_names']
             print(f"[SUCCESS] Preprocessing objects loaded from: {preprocessing_path}")
             
+            # Load normalization metadata
+            metadata_path = Path(__file__).parent / "data" / "processed" / "processing_metadata.json"
+            with open(metadata_path, 'r') as f:
+                self.normalization_metadata = json.load(f)
+            print(f"[SUCCESS] Normalization metadata loaded from: {metadata_path}")
+            
             # Get diagnosis classes
             if 'target' in self.label_encoders:
                 self.diagnosis_classes = self.label_encoders['target'].classes_
@@ -88,6 +94,38 @@ class AlzheimerPredictor:
         except Exception as e:
             print(f"[ERROR] Failed to load model: {e}")
             raise
+    
+    
+    def normalize_test_data(self, data):
+        """
+        Normalize test data using the same normalization parameters from training.
+        
+        Parameters:
+        -----------
+        data : pd.DataFrame
+            Raw test data to normalize
+            
+        Returns:
+        --------
+        pd.DataFrame
+            Normalized test data
+        """
+        data = data.copy()
+        
+        # Normalize numeric columns using min-max scaling
+        for col, params in self.normalization_metadata['numeric'].items():
+            if col in data.columns and params['scaled']:
+                min_val = params['min']
+                max_val = params['max']
+                if min_val != max_val:
+                    data[col] = (data[col] - min_val) / (max_val - min_val)
+        
+        # Binary columns (0/1) - ensure they are integers
+        for col in self.normalization_metadata['binary_cols']:
+            if col in data.columns:
+                data[col] = data[col].astype(int)
+        
+        return data
     
     
     def preprocess_input(self, patient_data):
@@ -111,10 +149,16 @@ class AlzheimerPredictor:
         # Make a copy to avoid modifying original data
         data = patient_data.copy()
         
+        print("[INFO] Step 1: Normalizing test data...")
+        # First, normalize the raw data using the same parameters as training
+        data = self.normalize_test_data(data)
+        
+        print("[INFO] Step 2: Dropping non-predictive columns...")
         # Drop non-predictive ID columns if present
         id_columns = ['PatientID', 'DoctorInCharge', 'Diagnosis']
         for col in id_columns:
             if col in data.columns:
+                print(f"[INFO]   - Dropping column: {col}")
                 data = data.drop(columns=[col])
         
         # Encode categorical features using saved label encoders
@@ -135,12 +179,15 @@ class AlzheimerPredictor:
             for feature in missing_features:
                 data[feature] = 0
         
+        print("[INFO] Step 3: Selecting and ordering features to match training...")
         # Select and order features to match training
         data = data[self.feature_names]
         
+        print("[INFO] Step 4: Applying scaler transformation...")
         # Scale features using the saved scaler
         scaled_data = self.scaler.transform(data)
         
+        print("[INFO] Preprocessing complete!")
         return scaled_data
     
     
