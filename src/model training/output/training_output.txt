@@ -1,0 +1,547 @@
+
+======================================================================
+ALZHEIMER'S DISEASE PREDICTION - MODEL TRAINING PIPELINE
+======================================================================
+Start time: 2025-11-19 12:44:41
+Log file: training_output.txt
+
+======================================================================
+[STEP 1] Loading Data
+======================================================================
+[SUCCESS] Data loaded successfully!
+[INFO] Dataset shape: (2149, 34)
+[INFO] Columns: ['PatientID', 'Age', 'Gender', 'Ethnicity', 'EducationLevel', 'BMI', 'Smoking', 'AlcoholConsumption', 'PhysicalActivity', 'DietQuality', 'SleepQuality', 'FamilyHistoryAlzheimers', 'CardiovascularDisease', 'Diabetes', 'Depression', 'HeadInjury', 'Hypertension', 'SystolicBP', 'DiastolicBP', 'CholesterolTotal', 'CholesterolLDL', 'CholesterolHDL', 'CholesterolTriglycerides', 'MMSE', 'FunctionalAssessment', 'MemoryComplaints', 'BehavioralProblems', 'ADL', 'Confusion', 'Disorientation', 'PersonalityChanges', 'DifficultyCompletingTasks', 'Forgetfulness', 'Diagnosis']
+
+[INFO] Target variable distribution:
+Diagnosis
+0    1389
+1     760
+Name: count, dtype: int64
+[INFO] Dendrogram saved to: hierarchical_dendrogram.png
+[INFO] Identified 17 hierarchical clusters at threshold 9.87
+[INFO] Cluster sizes: {'Cluster 1': np.int64(90), 'Cluster 2': np.int64(206), 'Cluster 3': np.int64(245), 'Cluster 4': np.int64(145), 'Cluster 5': np.int64(108), 'Cluster 6': np.int64(122), 'Cluster 7': np.int64(150), 'Cluster 8': np.int64(164), 'Cluster 9': np.int64(143), 'Cluster 10': np.int64(117), 'Cluster 11': np.int64(104), 'Cluster 12': np.int64(117), 'Cluster 13': np.int64(96), 'Cluster 14': np.int64(72), 'Cluster 15': np.int64(103), 'Cluster 16': np.int64(68), 'Cluster 17': np.int64(99)}
+[INFO] Elbow method plot saved to: elbow_method.png
+[INFO] Silhouette score plot saved to: silhouette_scores.png
+[INFO] Strongest feature correlations plot saved to: strongest_feature_correlations.png
+[INFO] Feature correlation heatmap saved to: feature_correlation_heatmap.png
+
+======================================================================
+[STEP 2] Handling Missing Values
+======================================================================
+[INFO] No missing values found in the dataset.
+
+======================================================================
+[STEP 3] Detecting and Handling Outliers
+======================================================================
+[INFO] Outliers detected and capped in 12 columns:
+  - Ethnicity: 211 outliers
+  - CardiovascularDisease: 310 outliers
+  - Diabetes: 324 outliers
+  - Depression: 431 outliers
+  - HeadInjury: 199 outliers
+  - Hypertension: 320 outliers
+  - MemoryComplaints: 447 outliers
+  - BehavioralProblems: 337 outliers
+  - Confusion: 441 outliers
+  - Disorientation: 340 outliers
+  - PersonalityChanges: 324 outliers
+  - DifficultyCompletingTasks: 341 outliers
+[SUCCESS] Outlier handling completed.
+
+======================================================================
+[STEP 4] Encoding Categorical Features
+======================================================================
+[INFO] No categorical features to encode.
+
+======================================================================
+[STEP 6] Preparing Features and Target
+======================================================================
+[INFO] Dropping non-predictive ID column: PatientID
+[INFO] Features shape: (2149, 32)
+[INFO] Target shape: (2149,)
+[INFO] Target classes: [0 1]
+[SUCCESS] Features and target prepared.
+
+======================================================================
+[STEP 7] Splitting Data
+======================================================================
+[INFO] Training set size: 1528 samples
+[INFO] Validation set size: 191 samples
+[INFO] Testing set size: 430 samples
+[INFO] Training set class distribution: [988 540]
+[INFO] Validation set class distribution: [123  68]
+[INFO] Testing set class distribution: [278 152]
+[INFO] Computed class_distribution={0: 988, 1: 540}
+[INFO] xgb_scale_pos_weight=1.8296296296296297
+[INFO] catboost_class_weights=[0.7732793522267206, 1.4148148148148147]
+[SUCCESS] Data split completed.
+
+======================================================================
+[STEP 8] Scaling Features
+======================================================================
+[INFO] Using StandardScaler (zero mean, unit variance)...
+[INFO] Scaler/preprocessor saved to: scaler.pkl
+[SUCCESS] Feature scaling completed.
+[INFO] Class distribution before resampling: {np.int64(0): np.int64(988), np.int64(1): np.int64(540)}; ratio=1.83
+[INFO] Resampling completed. New class distribution: {np.int64(0): np.int64(988), np.int64(1): np.int64(988)}
+
+======================================================================
+[TRAINING] Starting Model Training
+======================================================================
+
+----------------------------------------------------------------------
+[MODEL] Training Logistic Regression
+----------------------------------------------------------------------
+Fitting 5 folds for each of 24 candidates, totalling 120 fits
+[INFO] Best parameters: {'C': 0.1, 'max_iter': 1000, 'penalty': 'l1', 'solver': 'saga'}
+[INFO] Best CV score: 0.7441
+[INFO] Best validation threshold=0.43 with F1=0.7587
+[INFO] Model refit on combined train+validation (2167 samples).
+
+[EVALUATION] Evaluating Logistic Regression...
+
+==================================================
+Logistic Regression - Test Set Performance:
+==================================================
+  Accuracy:  0.7047
+  F1-Score:  0.7110
+  ROC-AUC:   0.8391
+
+Logistic Regression - 5-Fold Cross-Validation:
+==================================================
+  Accuracy:  0.7444 (+/- 0.0144)
+  F1-Score:  0.7441 (+/- 0.0145)
+==================================================
+
+[INFO] Confusion matrix plot saved to: confusion_matrix.png
+[INFO] ROC curve plot saved to: roc_curve.png
+[INFO] SHAP summary plot saved to: shap_summary.png
+[INFO] LIME explanation plot saved to: lime_explanation_1.png
+[INFO] LIME explanation plot saved to: lime_explanation_2.png
+[INFO] LIME explanation plot saved to: lime_explanation_3.png
+[INFO] Confusion matrix plot saved to: confusion_matrix.png
+[INFO] ROC curve plot saved to: roc_curve.png
+[INFO] Confusion matrix plot saved to: confusion_matrix.png
+[INFO] ROC curve plot saved to: roc_curve.png
+[INFO] Confusion matrix plot saved to: confusion_matrix.png
+[INFO] ROC curve plot saved to: roc_curve.png
+[SUCCESS] Logistic Regression training completed.
+
+----------------------------------------------------------------------
+[MODEL] Training Support Vector Machine (SVM)
+----------------------------------------------------------------------
+Fitting 5 folds for each of 20 candidates, totalling 100 fits
+[INFO] Best parameters: {'probability': True, 'kernel': 'rbf', 'gamma': 0.1, 'C': 100}
+[INFO] Best CV score: 0.8599
+[INFO] Best validation threshold=0.43 with F1=0.7318
+[INFO] Model refit on combined train+validation (2167 samples).
+
+[EVALUATION] Evaluating SVM...
+
+==================================================
+SVM - Test Set Performance:
+==================================================
+  Accuracy:  0.7465
+  F1-Score:  0.7362
+  ROC-AUC:   0.7796
+
+SVM - 5-Fold Cross-Validation:
+==================================================
+  Accuracy:  0.8604 (+/- 0.0456)
+  F1-Score:  0.8599 (+/- 0.0454)
+==================================================
+
+[INFO] Confusion matrix plot saved to: confusion_matrix.png
+[INFO] ROC curve plot saved to: roc_curve.png
+[INFO] SHAP summary plot saved to: shap_summary.png
+[INFO] LIME explanation plot saved to: lime_explanation_1.png
+[INFO] LIME explanation plot saved to: lime_explanation_2.png
+[INFO] LIME explanation plot saved to: lime_explanation_3.png
+[INFO] Confusion matrix plot saved to: confusion_matrix.png
+[INFO] ROC curve plot saved to: roc_curve.png
+[INFO] Confusion matrix plot saved to: confusion_matrix.png
+[INFO] ROC curve plot saved to: roc_curve.png
+[INFO] Confusion matrix plot saved to: confusion_matrix.png
+[INFO] ROC curve plot saved to: roc_curve.png
+[SUCCESS] SVM training completed.
+
+----------------------------------------------------------------------
+[MODEL] Training K-Nearest Neighbors (KNN)
+----------------------------------------------------------------------
+Fitting 5 folds for each of 84 candidates, totalling 420 fits
+[INFO] Best parameters: {'metric': 'manhattan', 'n_neighbors': 3, 'p': 1, 'weights': 'distance'}
+[INFO] Best CV score: 0.7651
+[INFO] Model refit on combined train+validation (2167 samples).
+
+[EVALUATION] Evaluating KNN...
+
+==================================================
+KNN - Test Set Performance:
+==================================================
+  Accuracy:  0.6349
+  F1-Score:  0.6423
+  ROC-AUC:   0.6606
+
+KNN - 5-Fold Cross-Validation:
+==================================================
+  Accuracy:  0.7698 (+/- 0.0422)
+  F1-Score:  0.7651 (+/- 0.0417)
+==================================================
+
+[INFO] Confusion matrix plot saved to: confusion_matrix.png
+[INFO] ROC curve plot saved to: roc_curve.png
+[INFO] SHAP summary plot saved to: shap_summary.png
+[INFO] LIME explanation plot saved to: lime_explanation_1.png
+[INFO] LIME explanation plot saved to: lime_explanation_2.png
+[INFO] LIME explanation plot saved to: lime_explanation_3.png
+[INFO] Confusion matrix plot saved to: confusion_matrix.png
+[INFO] ROC curve plot saved to: roc_curve.png
+[INFO] Confusion matrix plot saved to: confusion_matrix.png
+[INFO] ROC curve plot saved to: roc_curve.png
+[INFO] Confusion matrix plot saved to: confusion_matrix.png
+[INFO] ROC curve plot saved to: roc_curve.png
+[SUCCESS] KNN training completed.
+
+----------------------------------------------------------------------
+[MODEL] Training Gaussian Naive Bayes
+----------------------------------------------------------------------
+[INFO] Best validation threshold=0.49 with F1=0.7978
+[INFO] Model refit on combined train+validation (2167 samples).
+
+[EVALUATION] Evaluating Naive Bayes...
+
+==================================================
+Naive Bayes - Test Set Performance:
+==================================================
+  Accuracy:  0.7674
+  F1-Score:  0.7705
+  ROC-AUC:   0.8446
+
+Naive Bayes - 5-Fold Cross-Validation:
+==================================================
+  Accuracy:  0.7601 (+/- 0.0173)
+  F1-Score:  0.7598 (+/- 0.0174)
+==================================================
+
+[INFO] Confusion matrix plot saved to: confusion_matrix.png
+[INFO] ROC curve plot saved to: roc_curve.png
+[INFO] SHAP summary plot saved to: shap_summary.png
+[INFO] LIME explanation plot saved to: lime_explanation_1.png
+[INFO] LIME explanation plot saved to: lime_explanation_2.png
+[INFO] LIME explanation plot saved to: lime_explanation_3.png
+[INFO] Confusion matrix plot saved to: confusion_matrix.png
+[INFO] ROC curve plot saved to: roc_curve.png
+[INFO] Confusion matrix plot saved to: confusion_matrix.png
+[INFO] ROC curve plot saved to: roc_curve.png
+[INFO] Confusion matrix plot saved to: confusion_matrix.png
+[INFO] ROC curve plot saved to: roc_curve.png
+[SUCCESS] Naive Bayes training completed.
+
+----------------------------------------------------------------------
+[MODEL] Training Decision Tree
+----------------------------------------------------------------------
+Fitting 5 folds for each of 384 candidates, totalling 1920 fits
+[INFO] Best parameters: {'criterion': 'gini', 'max_depth': 10, 'min_samples_leaf': 4, 'min_samples_split': 20, 'splitter': 'best'}
+[INFO] Best CV score: 0.7958
+[INFO] Model refit on combined train+validation (2167 samples).
+
+[EVALUATION] Evaluating Decision Tree...
+
+==================================================
+Decision Tree - Test Set Performance:
+==================================================
+  Accuracy:  0.7535
+  F1-Score:  0.7555
+  ROC-AUC:   0.8332
+
+Decision Tree - 5-Fold Cross-Validation:
+==================================================
+  Accuracy:  0.7961 (+/- 0.0283)
+  F1-Score:  0.7958 (+/- 0.0284)
+==================================================
+
+[INFO] Confusion matrix plot saved to: confusion_matrix.png
+[INFO] Decision tree plot saved to: decision_tree.svg
+[INFO] ROC curve plot saved to: roc_curve.png
+[INFO] SHAP summary plot saved to: shap_summary.png
+[INFO] LIME explanation plot saved to: lime_explanation_1.png
+[INFO] LIME explanation plot saved to: lime_explanation_2.png
+[INFO] LIME explanation plot saved to: lime_explanation_3.png
+[INFO] Confusion matrix plot saved to: confusion_matrix.png
+[INFO] ROC curve plot saved to: roc_curve.png
+[INFO] Confusion matrix plot saved to: confusion_matrix.png
+[INFO] ROC curve plot saved to: roc_curve.png
+[INFO] Confusion matrix plot saved to: confusion_matrix.png
+[INFO] ROC curve plot saved to: roc_curve.png
+[SUCCESS] Decision Tree training completed.
+
+----------------------------------------------------------------------
+[MODEL] Training Random Forest
+----------------------------------------------------------------------
+Fitting 5 folds for each of 30 candidates, totalling 150 fits
+[INFO] Best parameters: {'n_estimators': 300, 'min_samples_split': 5, 'min_samples_leaf': 2, 'max_features': 'sqrt', 'max_depth': None, 'bootstrap': False}
+[INFO] Best CV score: 0.8668
+[INFO] Model refit on combined train+validation (2167 samples).
+
+[EVALUATION] Evaluating Random Forest...
+
+==================================================
+Random Forest - Test Set Performance:
+==================================================
+  Accuracy:  0.8349
+  F1-Score:  0.8277
+  ROC-AUC:   0.8846
+
+Random Forest - 5-Fold Cross-Validation:
+==================================================
+  Accuracy:  0.8679 (+/- 0.0393)
+  F1-Score:  0.8668 (+/- 0.0404)
+==================================================
+
+[INFO] Confusion matrix plot saved to: confusion_matrix.png
+[INFO] ROC curve plot saved to: roc_curve.png
+[INFO] SHAP summary plot saved to: shap_summary.png
+[INFO] LIME explanation plot saved to: lime_explanation_1.png
+[INFO] LIME explanation plot saved to: lime_explanation_2.png
+[INFO] LIME explanation plot saved to: lime_explanation_3.png
+[INFO] Confusion matrix plot saved to: confusion_matrix.png
+[INFO] ROC curve plot saved to: roc_curve.png
+[INFO] Confusion matrix plot saved to: confusion_matrix.png
+[INFO] ROC curve plot saved to: roc_curve.png
+[INFO] Confusion matrix plot saved to: confusion_matrix.png
+[INFO] ROC curve plot saved to: roc_curve.png
+[SUCCESS] Random Forest training completed.
+
+----------------------------------------------------------------------
+[MODEL] Training MLP (Neural Network)
+----------------------------------------------------------------------
+Fitting 5 folds for each of 20 candidates, totalling 100 fits
+[INFO] Best parameters: {'learning_rate_init': 0.001, 'hidden_layer_sizes': (128, 64, 32), 'batch_size': 32, 'alpha': 0.0001, 'activation': 'relu'}
+[INFO] Best CV score: 0.8051
+[INFO] Model refit on combined train+validation (2167 samples).
+
+[EVALUATION] Evaluating MLP...
+
+==================================================
+MLP - Test Set Performance:
+==================================================
+  Accuracy:  0.7209
+  F1-Score:  0.7165
+  ROC-AUC:   0.7477
+
+MLP - 5-Fold Cross-Validation:
+==================================================
+  Accuracy:  0.8057 (+/- 0.0525)
+  F1-Score:  0.8051 (+/- 0.0520)
+==================================================
+
+[INFO] Confusion matrix plot saved to: confusion_matrix.png
+[INFO] ROC curve plot saved to: roc_curve.png
+[INFO] SHAP summary plot saved to: shap_summary.png
+[INFO] LIME explanation plot saved to: lime_explanation_1.png
+[INFO] LIME explanation plot saved to: lime_explanation_2.png
+[INFO] LIME explanation plot saved to: lime_explanation_3.png
+[INFO] Confusion matrix plot saved to: confusion_matrix.png
+[INFO] ROC curve plot saved to: roc_curve.png
+[INFO] Confusion matrix plot saved to: confusion_matrix.png
+[INFO] ROC curve plot saved to: roc_curve.png
+[INFO] Confusion matrix plot saved to: confusion_matrix.png
+[INFO] ROC curve plot saved to: roc_curve.png
+[SUCCESS] MLP training completed.
+
+----------------------------------------------------------------------
+[MODEL] Training XGBoost
+----------------------------------------------------------------------
+Fitting 5 folds for each of 30 candidates, totalling 150 fits
+[INFO] Best parameters: {'subsample': 0.8, 'reg_lambda': 0.1, 'reg_alpha': 0.1, 'n_estimators': 200, 'max_depth': 5, 'learning_rate': 0.1, 'gamma': 0, 'colsample_bytree': 0.6}
+[INFO] Best CV score: 0.8530
+[INFO] Model refit on combined train+validation (2167 samples).
+
+[EVALUATION] Evaluating XGBoost...
+
+==================================================
+XGBoost - Test Set Performance:
+==================================================
+  Accuracy:  0.8116
+  F1-Score:  0.8115
+  ROC-AUC:   0.8687
+
+XGBoost - 5-Fold Cross-Validation:
+==================================================
+  Accuracy:  0.8538 (+/- 0.0332)
+  F1-Score:  0.8530 (+/- 0.0335)
+==================================================
+
+[INFO] Confusion matrix plot saved to: confusion_matrix.png
+[INFO] ROC curve plot saved to: roc_curve.png
+[WARNING] Could not generate SHAP plot: could not convert string to float: '[6.3172907E-1]'
+[INFO] LIME explanation plot saved to: lime_explanation_1.png
+[INFO] LIME explanation plot saved to: lime_explanation_2.png
+[INFO] LIME explanation plot saved to: lime_explanation_3.png
+[INFO] Confusion matrix plot saved to: confusion_matrix.png
+[INFO] ROC curve plot saved to: roc_curve.png
+[INFO] Confusion matrix plot saved to: confusion_matrix.png
+[INFO] ROC curve plot saved to: roc_curve.png
+[INFO] Confusion matrix plot saved to: confusion_matrix.png
+[INFO] ROC curve plot saved to: roc_curve.png
+[SUCCESS] XGBoost training completed.
+
+----------------------------------------------------------------------
+[MODEL] Training LightGBM
+----------------------------------------------------------------------
+Fitting 5 folds for each of 30 candidates, totalling 150 fits
+[INFO] Best parameters: {'subsample': 0.6, 'reg_lambda': 1, 'reg_alpha': 0.1, 'num_leaves': 31, 'n_estimators': 200, 'max_depth': 9, 'learning_rate': 0.2, 'colsample_bytree': 1.0}
+[INFO] Best CV score: 0.8502
+[INFO] Model refit on combined train+validation (2167 samples).
+
+[EVALUATION] Evaluating LightGBM...
+
+==================================================
+LightGBM - Test Set Performance:
+==================================================
+  Accuracy:  0.8256
+  F1-Score:  0.8198
+  ROC-AUC:   0.8519
+
+LightGBM - 5-Fold Cross-Validation:
+==================================================
+  Accuracy:  0.8512 (+/- 0.0380)
+  F1-Score:  0.8502 (+/- 0.0388)
+==================================================
+
+[INFO] Confusion matrix plot saved to: confusion_matrix.png
+[INFO] ROC curve plot saved to: roc_curve.png
+[INFO] SHAP summary plot saved to: shap_summary.png
+[INFO] LIME explanation plot saved to: lime_explanation_1.png
+[INFO] LIME explanation plot saved to: lime_explanation_2.png
+[INFO] LIME explanation plot saved to: lime_explanation_3.png
+[INFO] Confusion matrix plot saved to: confusion_matrix.png
+[INFO] ROC curve plot saved to: roc_curve.png
+[INFO] Confusion matrix plot saved to: confusion_matrix.png
+[INFO] ROC curve plot saved to: roc_curve.png
+[INFO] Confusion matrix plot saved to: confusion_matrix.png
+[INFO] ROC curve plot saved to: roc_curve.png
+[SUCCESS] LightGBM training completed.
+
+----------------------------------------------------------------------
+[MODEL] Training CatBoost
+----------------------------------------------------------------------
+Fitting 5 folds for each of 20 candidates, totalling 100 fits
+[INFO] Best parameters: {'learning_rate': 0.05, 'l2_leaf_reg': 1, 'iterations': 200, 'depth': 8, 'border_count': 128, 'bagging_temperature': 5}
+[INFO] Best CV score: 0.8648
+[INFO] Model refit on combined train+validation (2167 samples).
+
+[EVALUATION] Evaluating CatBoost...
+
+==================================================
+CatBoost - Test Set Performance:
+==================================================
+  Accuracy:  0.8163
+  F1-Score:  0.8143
+  ROC-AUC:   0.8766
+
+CatBoost - 5-Fold Cross-Validation:
+==================================================
+  Accuracy:  0.8654 (+/- 0.0271)
+  F1-Score:  0.8648 (+/- 0.0271)
+==================================================
+
+[INFO] Confusion matrix plot saved to: confusion_matrix.png
+[INFO] ROC curve plot saved to: roc_curve.png
+[INFO] SHAP summary plot saved to: shap_summary.png
+[INFO] LIME explanation plot saved to: lime_explanation_1.png
+[INFO] LIME explanation plot saved to: lime_explanation_2.png
+[INFO] LIME explanation plot saved to: lime_explanation_3.png
+[INFO] Confusion matrix plot saved to: confusion_matrix.png
+[INFO] ROC curve plot saved to: roc_curve.png
+[INFO] Confusion matrix plot saved to: confusion_matrix.png
+[INFO] ROC curve plot saved to: roc_curve.png
+[INFO] Confusion matrix plot saved to: confusion_matrix.png
+[INFO] ROC curve plot saved to: roc_curve.png
+[SUCCESS] CatBoost training completed.
+
+----------------------------------------------------------------------
+[MODEL] Training Stacking Ensemble
+----------------------------------------------------------------------
+[INFO] Training stacking ensemble with base models: Random Forest, XGBoost, LightGBM, SVM
+[INFO] Meta-classifier: Logistic Regression
+[INFO] Model refit on combined train+validation (2167 samples).
+
+[EVALUATION] Evaluating Stacking Ensemble...
+
+==================================================
+Stacking Ensemble - Test Set Performance:
+==================================================
+  Accuracy:  0.8326
+  F1-Score:  0.8285
+  ROC-AUC:   0.8868
+
+Stacking Ensemble - 5-Fold Cross-Validation:
+==================================================
+  Accuracy:  0.8563 (+/- 0.0363)
+  F1-Score:  0.8554 (+/- 0.0371)
+==================================================
+
+[INFO] Confusion matrix plot saved to: confusion_matrix.png
+[INFO] ROC curve plot saved to: roc_curve.png
+[INFO] SHAP summary plot saved to: shap_summary.png
+[INFO] LIME explanation plot saved to: lime_explanation_1.png
+[INFO] LIME explanation plot saved to: lime_explanation_2.png
+[INFO] LIME explanation plot saved to: lime_explanation_3.png
+[INFO] Confusion matrix plot saved to: confusion_matrix.png
+[INFO] ROC curve plot saved to: roc_curve.png
+[INFO] Confusion matrix plot saved to: confusion_matrix.png
+[INFO] ROC curve plot saved to: roc_curve.png
+[INFO] Confusion matrix plot saved to: confusion_matrix.png
+[INFO] ROC curve plot saved to: roc_curve.png
+[SUCCESS] Stacking Ensemble training completed.
+
+======================================================================
+[FINAL] Model Comparison
+======================================================================
+
+              Model  Test Accuracy  Test F1-Score  Test ROC-AUC CV Accuracy (mean±std) CV F1-Score (mean±std)
+  Stacking Ensemble       0.832558       0.828468      0.886785          0.8563±0.0363          0.8554±0.0371
+      Random Forest       0.834884       0.827683      0.884608          0.8679±0.0393          0.8668±0.0404
+           LightGBM       0.825581       0.819848      0.851903          0.8512±0.0380          0.8502±0.0388
+           CatBoost       0.816279       0.814274      0.876562          0.8654±0.0271          0.8648±0.0271
+            XGBoost       0.811628       0.811486      0.868729          0.8538±0.0332          0.8530±0.0335
+        Naive Bayes       0.767442       0.770498      0.844614          0.7601±0.0173          0.7598±0.0174
+      Decision Tree       0.753488       0.755450      0.833183          0.7961±0.0283          0.7958±0.0284
+                SVM       0.746512       0.736166      0.779629          0.8604±0.0456          0.8599±0.0454
+                MLP       0.720930       0.716524      0.747657          0.8057±0.0525          0.8051±0.0520
+Logistic Regression       0.704651       0.710993      0.839147          0.7444±0.0144          0.7441±0.0145
+                KNN       0.634884       0.642346      0.660640          0.7698±0.0422          0.7651±0.0417
+
+[BEST MODEL] Stacking Ensemble
+  Test Accuracy: 0.8326
+  Test F1-Score: 0.8285
+  Test ROC-AUC:  0.8868
+
+[INFO] Model comparison saved to: src\model training\output\model_comparison.csv
+[INFO] Model comparison plot saved to: model_comparison.png
+
+======================================================================
+[SAVING] Saving Results and Models
+======================================================================
+[SUCCESS] Model results saved to: model_results.json
+[SUCCESS] Logistic Regression saved to: logistic_regression.pkl
+[SUCCESS] SVM saved to: svm.pkl
+[SUCCESS] KNN saved to: knn.pkl
+[SUCCESS] Naive Bayes saved to: naive_bayes.pkl
+[SUCCESS] Decision Tree saved to: decision_tree.pkl
+[SUCCESS] Random Forest saved to: random_forest.pkl
+[SUCCESS] MLP saved to: mlp.pkl
+[SUCCESS] XGBoost saved to: xgboost.pkl
+[SUCCESS] LightGBM saved to: lightgbm.pkl
+[SUCCESS] CatBoost saved to: catboost.pkl
+[SUCCESS] Stacking Ensemble saved to: stacking_ensemble.pkl
+[SUCCESS] Best model (Stacking Ensemble) saved to: best_model.pkl
+[SUCCESS] Preprocessing objects saved to: preprocessing.pkl
+
+======================================================================
+[COMPLETED] Pipeline Execution Completed Successfully!
+======================================================================
+End time: 2025-11-19 12:49:15
+
+[INFO] Complete log saved to: training_output.txt

@@ -28,6 +28,8 @@ matplotlib.use('Agg')  # Non-interactive backend for Windows
 
 # Scikit-learn imports
 from sklearn.model_selection import train_test_split, cross_val_score, GridSearchCV, RandomizedSearchCV, StratifiedKFold
+from sklearn.calibration import CalibratedClassifierCV
+from sklearn.utils.class_weight import compute_sample_weight
 from sklearn.preprocessing import StandardScaler, LabelEncoder, RobustScaler
 from sklearn.impute import SimpleImputer
 from sklearn.feature_selection import SelectKBest, f_classif, mutual_info_classif
@@ -150,6 +152,8 @@ class AlzheimerModelTrainer:
         self.X_test = None
         self.y_train = None
         self.y_test = None
+        self.X_val = None
+        self.y_val = None
         
         # Initialize preprocessing objects
         self.scaler = None
@@ -160,6 +164,15 @@ class AlzheimerModelTrainer:
         self.trained_models = {}
         self.model_results = {}
         self.best_models = {}
+        self.best_thresholds = {}
+        # SHAP background (summarized) to speed up KernelExplainer
+        self.shap_background = None
+        self.shap_background_k = 100  # default number of background samples for SHAP
+        # Resampling and calibration settings
+        self.resampler_method = 'smote'  # options: 'smote', 'adasyn'
+        self.resampler_params = {}
+        self.calibrate_probabilities = False
+        self.use_sample_weight_for_mlp = True
         
         # Create output directories
         self.output_dir = Path('src/model training/output')
@@ -244,7 +257,7 @@ class AlzheimerModelTrainer:
             dendro_path = plots_root / 'hierarchical_dendrogram.png'
             plt.savefig(dendro_path, dpi=300, bbox_inches='tight')
             plt.close()
-            print(f"[INFO] Dendrogram saved to: {dendro_path}")
+            print(f"[INFO] Dendrogram saved to: {dendro_path.name}")
             print(f"[INFO] Identified {n_clusters} hierarchical clusters at threshold {threshold:.2f}")
             print(f"[INFO] Cluster sizes: {dict(zip([f'Cluster {i+1}' for i in range(len(cluster_counts))], cluster_counts))}")
 
@@ -265,7 +278,7 @@ class AlzheimerModelTrainer:
             elbow_path = plots_root / 'elbow_method.png'
             plt.savefig(elbow_path, dpi=200)
             plt.close()
-            print(f"[INFO] Elbow method plot saved to: {elbow_path}")
+            print(f"[INFO] Elbow method plot saved to: {elbow_path.name}")
 
             # 3. Silhouette Score Plot
             from sklearn.metrics import silhouette_score
@@ -284,7 +297,7 @@ class AlzheimerModelTrainer:
             sil_path = plots_root / 'silhouette_scores.png'
             plt.savefig(sil_path, dpi=200)
             plt.close()
-            print(f"[INFO] Silhouette score plot saved to: {sil_path}")
+            print(f"[INFO] Silhouette score plot saved to: {sil_path.name}")
 
             # 4. Strongest Feature Correlations Plot (top 10 pairs)
             corr = X_num.corr().abs()
@@ -298,7 +311,7 @@ class AlzheimerModelTrainer:
             strong_corr_path = plots_root / 'strongest_feature_correlations.png'
             plt.savefig(strong_corr_path, dpi=200)
             plt.close()
-            print(f"[INFO] Strongest feature correlations plot saved to: {strong_corr_path}")
+            print(f"[INFO] Strongest feature correlations plot saved to: {strong_corr_path.name}")
 
             # 5. Feature Correlation Heatmap
             plt.figure(figsize=(24, 20))
@@ -311,7 +324,7 @@ class AlzheimerModelTrainer:
             heatmap_path = plots_root / 'feature_correlation_heatmap.png'
             plt.savefig(heatmap_path, dpi=300, bbox_inches='tight')
             plt.close()
-            print(f"[INFO] Feature correlation heatmap saved to: {heatmap_path}")
+            print(f"[INFO] Feature correlation heatmap saved to: {heatmap_path.name}")
 
             return self.df
         
@@ -548,19 +561,70 @@ class AlzheimerModelTrainer:
         print("[STEP 7] Splitting Data")
         print("="*70)
         
+        # First split off the test set
         stratify_arg = self.y if stratify else None
-        
-        self.X_train, self.X_test, self.y_train, self.y_test = train_test_split(
+        X_remaining, self.X_test, y_remaining, self.y_test = train_test_split(
             self.X, self.y,
             test_size=test_size,
             random_state=self.random_state,
             stratify=stratify_arg
         )
-        
+
+        # Then split the remaining data into training + validation.
+        # Default validation size will be ~10% of the original dataset (i.e. ~11.11% of the remaining when test_size=0.2)
+        # This keeps overall splits roughly: train=0.72, val=0.08, test=0.20 for default test_size.
+        val_relative = 0.1111111111111111
+        stratify_rem = y_remaining if stratify else None
+        self.X_train, self.X_val, self.y_train, self.y_val = train_test_split(
+            X_remaining, y_remaining,
+            test_size=val_relative,
+            random_state=self.random_state,
+            stratify=stratify_rem
+        )
+
         print(f"[INFO] Training set size: {self.X_train.shape[0]} samples")
+        print(f"[INFO] Validation set size: {self.X_val.shape[0]} samples")
         print(f"[INFO] Testing set size: {self.X_test.shape[0]} samples")
         print(f"[INFO] Training set class distribution: {np.bincount(self.y_train)}")
+        print(f"[INFO] Validation set class distribution: {np.bincount(self.y_val)}")
         print(f"[INFO] Testing set class distribution: {np.bincount(self.y_test)}")
+        # Compute class distribution and useful weights for imbalance-aware training
+        try:
+            unique_train, counts_train = np.unique(self.y_train, return_counts=True)
+            total_train = counts_train.sum()
+            # Store distribution
+            self.class_distribution = dict(zip(unique_train.tolist(), counts_train.tolist()))
+            # For scikit-learn estimators we will use 'balanced' class_weight
+            self.sklearn_class_weight = 'balanced'
+
+            # For XGBoost use scale_pos_weight = n_negative / n_positive for binary
+            self.xgb_scale_pos_weight = None
+            if len(counts_train) == 2:
+                # find positive class count (assume label 1 is positive if present)
+                if 1 in unique_train:
+                    pos_count = counts_train[unique_train.tolist().index(1)]
+                else:
+                    # fallback: treat the smaller class as positive
+                    pos_count = counts_train.min()
+                neg_count = total_train - pos_count
+                if pos_count > 0:
+                    self.xgb_scale_pos_weight = float(neg_count) / float(pos_count)
+                else:
+                    self.xgb_scale_pos_weight = 1.0
+
+            # For CatBoost, create class_weights list (inverse frequency)
+            try:
+                cat_weights = (total_train / (len(counts_train) * counts_train)).tolist()
+            except Exception:
+                cat_weights = None
+            self.catboost_class_weights = cat_weights
+
+            print(f"[INFO] Computed class_distribution={self.class_distribution}")
+            print(f"[INFO] xgb_scale_pos_weight={self.xgb_scale_pos_weight}")
+            print(f"[INFO] catboost_class_weights={self.catboost_class_weights}")
+        except Exception as e:
+            print(f"[WARNING] Could not compute class weights: {e}")
+
         print("[SUCCESS] Data split completed.")
     
     
@@ -588,6 +652,9 @@ class AlzheimerModelTrainer:
         # Fit on training data and transform both train and test
         self.X_train = self.scaler.fit_transform(self.X_train)
         self.X_test = self.scaler.transform(self.X_test)
+        # Transform validation set if present
+        if getattr(self, 'X_val', None) is not None:
+            self.X_val = self.scaler.transform(self.X_val)
 
         # Save scaler/preprocessor object for deployment
         import joblib
@@ -595,9 +662,126 @@ class AlzheimerModelTrainer:
         trained_models_dir.mkdir(parents=True, exist_ok=True)
         scaler_path = trained_models_dir / "scaler.pkl"
         joblib.dump(self.scaler, scaler_path)
-        print(f"[INFO] Scaler/preprocessor saved to: {scaler_path}")
+        print(f"[INFO] Scaler/preprocessor saved to: {scaler_path.name}")
 
         print(f"[SUCCESS] Feature scaling completed.")
+
+    def apply_resampling(self, method='smote', imbalance_ratio_threshold=1.5):
+        """
+        Apply resampling (e.g., SMOTE) on the training set only when class imbalance
+        exceeds `imbalance_ratio_threshold` (largest class count / smallest class count).
+
+        This runs after scaling so distance-based samplers (SMOTE) behave properly.
+        """
+        try:
+            # Only run if validation/test split exists and training data is present
+            if getattr(self, 'X_train', None) is None or getattr(self, 'y_train', None) is None:
+                print("[INFO] No training data available for resampling.")
+                return
+
+            unique, counts = np.unique(self.y_train, return_counts=True)
+            if len(counts) <= 1:
+                print("[INFO] Single-class training data; skipping resampling.")
+                return
+
+            ratio = counts.max() / counts.min()
+            print(f"[INFO] Class distribution before resampling: {dict(zip(unique, counts))}; ratio={ratio:.2f}")
+
+            if ratio < imbalance_ratio_threshold:
+                print("[INFO] Imbalance below threshold; skipping resampling.")
+                return
+
+            # Try to import resamplers
+            try:
+                from imblearn.over_sampling import SMOTE, ADASYN
+            except Exception:
+                print("[WARNING] imbalanced-learn not installed; cannot apply resampling. Install 'imbalanced-learn' to enable this.")
+                return
+
+            # Allow additional parameters via self.resampler_params
+            params = getattr(self, 'resampler_params', {}) or {}
+
+            if method.lower() == 'adasyn':
+                resampler = ADASYN(random_state=self.random_state, **params)
+            else:
+                # Default to SMOTE
+                resampler = SMOTE(random_state=self.random_state, **params)
+
+            X_res, y_res = resampler.fit_resample(self.X_train, self.y_train)
+            self.X_train = X_res
+            self.y_train = y_res
+            unique2, counts2 = np.unique(self.y_train, return_counts=True)
+            print(f"[INFO] Resampling completed. New class distribution: {dict(zip(unique2, counts2))}")
+
+        except Exception as e:
+            print(f"[WARNING] Resampling failed: {e}")
+
+    def _refit_on_train_val(self, model):
+        """
+        Refit a fitted model on the combined training + validation sets (if validation exists).
+        This gives the final model access to more data after hyperparameter selection.
+        """
+        """
+        Refit a fitted model on the combined training + validation sets (if validation exists).
+        If `use_sample_weight=True` will compute sample weights using balanced strategy and pass
+        them to `fit` when supported by the estimator.
+        """
+        def _supports_sample_weight(est):
+            # Heuristic: many sklearn estimators accept sample_weight in fit
+            return True
+
+        if getattr(self, 'X_val', None) is None or getattr(self, 'y_val', None) is None:
+            return model
+
+        try:
+            X_combined = np.concatenate([self.X_train, self.X_val], axis=0)
+            y_combined = np.concatenate([self.y_train, self.y_val], axis=0)
+            # If requested, compute sample weights for combined data
+            if getattr(self, 'use_sample_weight_for_refit', False) and _supports_sample_weight(model):
+                try:
+                    sample_weights = compute_sample_weight(class_weight='balanced', y=y_combined)
+                    model.fit(X_combined, y_combined, sample_weight=sample_weights)
+                except TypeError:
+                    # estimator does not accept sample_weight
+                    model.fit(X_combined, y_combined)
+            else:
+                model.fit(X_combined, y_combined)
+
+            print(f"[INFO] Model refit on combined train+validation ({X_combined.shape[0]} samples).")
+        except Exception as e:
+            print(f"[WARNING] Could not refit on train+val: {e}")
+
+        return model
+
+    def _find_best_threshold(self, model, X_val, y_val):
+        """
+        For binary classification, find the probability threshold on X_val that maximizes F1.
+        Returns None for multiclass or if not applicable.
+        """
+        try:
+            if X_val is None or y_val is None:
+                return None
+            # Only for binary
+            if len(np.unique(y_val)) != 2:
+                return None
+            if not hasattr(model, 'predict_proba'):
+                return None
+
+            probs = model.predict_proba(X_val)[:, 1]
+            best_thresh = 0.5
+            best_f1 = -1.0
+            thresholds = np.linspace(0.01, 0.99, 99)
+            for t in thresholds:
+                preds = (probs >= t).astype(int)
+                f = f1_score(y_val, preds, average='weighted')
+                if f > best_f1:
+                    best_f1 = f
+                    best_thresh = t
+            print(f"[INFO] Best validation threshold={best_thresh:.2f} with F1={best_f1:.4f}")
+            return best_thresh
+        except Exception as e:
+            print(f"[WARNING] Threshold search failed: {e}")
+            return None
     
     
     def train_logistic_regression(self, tune_hyperparameters=True):
@@ -623,7 +807,8 @@ class AlzheimerModelTrainer:
             }
             
             # Grid search with 5-fold cross-validation
-            model = LogisticRegression(random_state=self.random_state)
+            model = LogisticRegression(random_state=self.random_state,
+                                       class_weight=getattr(self, 'sklearn_class_weight', 'balanced'))
             grid_search = GridSearchCV(
                 model, param_grid,
                 cv=5, scoring='f1_weighted',
@@ -635,11 +820,30 @@ class AlzheimerModelTrainer:
             
             print(f"[INFO] Best parameters: {grid_search.best_params_}")
             print(f"[INFO] Best CV score: {grid_search.best_score_:.4f}")
+            # If validation set exists, we'll compute threshold below for Logistic Regression
+            # If validation set exists, find best probability threshold on validation
+            # Optionally calibrate probabilities before threshold tuning
+            if getattr(self, 'calibrate_probabilities', False):
+                best_model = self._calibrate_model(best_model, method='sigmoid')
+
+            if getattr(self, 'X_val', None) is not None and hasattr(best_model, 'predict_proba'):
+                thresh = self._find_best_threshold(best_model, self.X_val, self.y_val)
+                if thresh is not None:
+                    self.best_thresholds['Logistic Regression'] = thresh
         else:
             # Train with default parameters
-            best_model = LogisticRegression(random_state=self.random_state, max_iter=1000)
+            best_model = LogisticRegression(random_state=self.random_state, max_iter=1000,
+                                            class_weight=getattr(self, 'sklearn_class_weight', 'balanced'))
             best_model.fit(self.X_train, self.y_train)
+            # If no hyperparameter tuning but validation exists, get threshold from this fit
+            if getattr(self, 'X_val', None) is not None and hasattr(best_model, 'predict_proba'):
+                thresh = self._find_best_threshold(best_model, self.X_val, self.y_val)
+                if thresh is not None:
+                    self.best_thresholds['Logistic Regression'] = thresh
         
+        # Refit on train+validation (if validation exists) so final model uses more data
+        best_model = self._refit_on_train_val(best_model)
+
         # Store the trained model
         self.trained_models['Logistic Regression'] = best_model
         
@@ -672,7 +876,8 @@ class AlzheimerModelTrainer:
             }
             
             # Randomized search (faster than grid search for SVM)
-            model = SVC(random_state=self.random_state)
+            model = SVC(random_state=self.random_state,
+                        class_weight=getattr(self, 'sklearn_class_weight', 'balanced'))
             random_search = RandomizedSearchCV(
                 model, param_grid,
                 n_iter=20, cv=5,
@@ -681,16 +886,35 @@ class AlzheimerModelTrainer:
                 random_state=self.random_state
             )
             
+            # Run randomized search (do not pass eval_set/early_stopping kwargs;
+            # these are not accepted by SVC/RandomizedSearchCV)
             random_search.fit(self.X_train, self.y_train)
             best_model = random_search.best_estimator_
             
             print(f"[INFO] Best parameters: {random_search.best_params_}")
             print(f"[INFO] Best CV score: {random_search.best_score_:.4f}")
+            # If validation set exists, find best probability threshold on validation
+            if getattr(self, 'calibrate_probabilities', False):
+                best_model = self._calibrate_model(best_model, method='sigmoid')
+
+            if getattr(self, 'X_val', None) is not None and hasattr(best_model, 'predict_proba'):
+                thresh = self._find_best_threshold(best_model, self.X_val, self.y_val)
+                if thresh is not None:
+                    self.best_thresholds['SVM'] = thresh
         else:
             # Train with default parameters
-            best_model = SVC(random_state=self.random_state, probability=True)
+            best_model = SVC(random_state=self.random_state, probability=True,
+                             class_weight=getattr(self, 'sklearn_class_weight', 'balanced'))
             best_model.fit(self.X_train, self.y_train)
+            # If validation exists, get best threshold for SVM
+            if getattr(self, 'X_val', None) is not None and hasattr(best_model, 'predict_proba'):
+                thresh = self._find_best_threshold(best_model, self.X_val, self.y_val)
+                if thresh is not None:
+                    self.best_thresholds['SVM'] = thresh
         
+        # Refit on train+validation (if validation exists)
+        best_model = self._refit_on_train_val(best_model)
+
         # Store the trained model
         self.trained_models['SVM'] = best_model
         
@@ -740,6 +964,9 @@ class AlzheimerModelTrainer:
             best_model = KNeighborsClassifier()
             best_model.fit(self.X_train, self.y_train)
         
+        # Refit on train+validation (if validation exists)
+        best_model = self._refit_on_train_val(best_model)
+
         # Store the trained model
         self.trained_models['KNN'] = best_model
         
@@ -762,6 +989,17 @@ class AlzheimerModelTrainer:
         # Train Gaussian Naive Bayes (minimal hyperparameters)
         model = GaussianNB()
         model.fit(self.X_train, self.y_train)
+        # Optionally calibrate before threshold tuning
+        if getattr(self, 'calibrate_probabilities', False):
+            model = self._calibrate_model(model, method='sigmoid')
+
+        # If validation exists and model supports predict_proba, find threshold
+        if getattr(self, 'X_val', None) is not None and hasattr(model, 'predict_proba'):
+            thresh = self._find_best_threshold(model, self.X_val, self.y_val)
+            if thresh is not None:
+                self.best_thresholds['Naive Bayes'] = thresh
+        # Refit on train+validation (if validation exists)
+        model = self._refit_on_train_val(model)
         
         # Store the trained model
         self.trained_models['Naive Bayes'] = model
@@ -796,7 +1034,8 @@ class AlzheimerModelTrainer:
             }
             
             # Grid search with 5-fold cross-validation
-            model = DecisionTreeClassifier(random_state=self.random_state)
+            model = DecisionTreeClassifier(random_state=self.random_state,
+                                           class_weight=getattr(self, 'sklearn_class_weight', 'balanced'))
             grid_search = GridSearchCV(
                 model, param_grid,
                 cv=5, scoring='f1_weighted',
@@ -810,9 +1049,13 @@ class AlzheimerModelTrainer:
             print(f"[INFO] Best CV score: {grid_search.best_score_:.4f}")
         else:
             # Train with default parameters
-            best_model = DecisionTreeClassifier(random_state=self.random_state)
+            best_model = DecisionTreeClassifier(random_state=self.random_state,
+                                                class_weight=getattr(self, 'sklearn_class_weight', 'balanced'))
             best_model.fit(self.X_train, self.y_train)
         
+        # Refit on train+validation (if validation exists)
+        best_model = self._refit_on_train_val(best_model)
+
         # Store the trained model
         self.trained_models['Decision Tree'] = best_model
         
@@ -847,7 +1090,8 @@ class AlzheimerModelTrainer:
             }
             
             # Randomized search (faster than grid search)
-            model = RandomForestClassifier(random_state=self.random_state)
+            model = RandomForestClassifier(random_state=self.random_state,
+                                           class_weight=getattr(self, 'sklearn_class_weight', 'balanced'))
             random_search = RandomizedSearchCV(
                 model, param_grid,
                 n_iter=30, cv=5,
@@ -856,16 +1100,25 @@ class AlzheimerModelTrainer:
                 random_state=self.random_state
             )
             
+            # Randomized search - do not pass eval_set to RandomizedSearchCV.fit
             random_search.fit(self.X_train, self.y_train)
             best_model = random_search.best_estimator_
             
             print(f"[INFO] Best parameters: {random_search.best_params_}")
             print(f"[INFO] Best CV score: {random_search.best_score_:.4f}")
+            # Optionally calibrate before threshold tuning
+            if getattr(self, 'calibrate_probabilities', False):
+                random_search.best_estimator_ = self._calibrate_model(random_search.best_estimator_, method='sigmoid')
         else:
             # Train with default parameters
-            best_model = RandomForestClassifier(random_state=self.random_state, n_estimators=100)
+            best_model = RandomForestClassifier(random_state=self.random_state, n_estimators=100,
+                                                class_weight=getattr(self, 'sklearn_class_weight', 'balanced'))
+            # Fit best model (RandomForest does not accept eval_set/early_stopping kwargs)
             best_model.fit(self.X_train, self.y_train)
         
+        # Refit on train+validation (if validation exists)
+        best_model = self._refit_on_train_val(best_model)
+
         # Store the trained model
         self.trained_models['Random Forest'] = best_model
         
@@ -918,6 +1171,9 @@ class AlzheimerModelTrainer:
                 random_state=self.random_state
             )
 
+            # Randomized search - MLP's RandomizedSearchCV should be called without
+            # eval_set/early_stopping kwargs (MLP handles early stopping via
+            # estimator parameters)
             random_search.fit(self.X_train, self.y_train)
             best_model = random_search.best_estimator_
 
@@ -937,7 +1193,23 @@ class AlzheimerModelTrainer:
                 max_iter=500,
                 random_state=self.random_state
             )
-            best_model.fit(self.X_train, self.y_train)
+            # Fit with optional sample weights for imbalance handling
+            try:
+                if self.use_sample_weight_for_mlp:
+                    sw = compute_sample_weight(class_weight='balanced', y=self.y_train)
+                    best_model.fit(self.X_train, self.y_train, sample_weight=sw)
+                else:
+                    best_model.fit(self.X_train, self.y_train)
+            except TypeError:
+                # Fallback if MLP implementation/version does not accept sample_weight
+                best_model.fit(self.X_train, self.y_train)
+
+        # Refit on train+validation (if validation exists)
+        # Enable use of sample weights during refit if requested
+        self.use_sample_weight_for_refit = self.use_sample_weight_for_mlp
+        best_model = self._refit_on_train_val(best_model)
+        # Reset the temporary flag
+        self.use_sample_weight_for_refit = False
 
         # Store the trained model
         self.trained_models['MLP'] = best_model
@@ -975,7 +1247,9 @@ class AlzheimerModelTrainer:
             }
             
             # Randomized search
-            model = XGBClassifier(random_state=self.random_state, eval_metric='logloss')
+            model = XGBClassifier(random_state=self.random_state,
+                                  eval_metric='logloss',
+                                  scale_pos_weight=getattr(self, 'xgb_scale_pos_weight', 1.0))
             random_search = RandomizedSearchCV(
                 model, param_grid,
                 n_iter=30, cv=5,
@@ -991,9 +1265,18 @@ class AlzheimerModelTrainer:
             print(f"[INFO] Best CV score: {random_search.best_score_:.4f}")
         else:
             # Train with default parameters
-            best_model = XGBClassifier(random_state=self.random_state, eval_metric='logloss')
+            best_model = XGBClassifier(random_state=self.random_state, eval_metric='logloss',
+                                      scale_pos_weight=getattr(self, 'xgb_scale_pos_weight', 1.0))
+            # Fit MLP - MLPClassifier uses its own early_stopping parameter
             best_model.fit(self.X_train, self.y_train)
         
+        # Optionally calibrate before threshold tuning
+        if getattr(self, 'calibrate_probabilities', False):
+            best_model = self._calibrate_model(best_model, method='sigmoid')
+
+        # Refit on train+validation (if validation exists)
+        best_model = self._refit_on_train_val(best_model)
+
         # Store the trained model
         self.trained_models['XGBoost'] = best_model
         
@@ -1030,7 +1313,9 @@ class AlzheimerModelTrainer:
             }
             
             # Randomized search
-            model = LGBMClassifier(random_state=self.random_state, verbose=-1)
+            model = LGBMClassifier(random_state=self.random_state,
+                                   class_weight=getattr(self, 'sklearn_class_weight', None),
+                                   verbose=-1)
             random_search = RandomizedSearchCV(
                 model, param_grid,
                 n_iter=30, cv=5,
@@ -1046,9 +1331,18 @@ class AlzheimerModelTrainer:
             print(f"[INFO] Best CV score: {random_search.best_score_:.4f}")
         else:
             # Train with default parameters
-            best_model = LGBMClassifier(random_state=self.random_state, verbose=-1)
+            best_model = LGBMClassifier(random_state=self.random_state,
+                                       class_weight=getattr(self, 'sklearn_class_weight', None),
+                                       verbose=-1)
             best_model.fit(self.X_train, self.y_train)
         
+        # Optionally calibrate before threshold tuning
+        if getattr(self, 'calibrate_probabilities', False):
+            best_model = self._calibrate_model(best_model, method='sigmoid')
+
+        # Refit on train+validation (if validation exists)
+        best_model = self._refit_on_train_val(best_model)
+
         # Store the trained model
         self.trained_models['LightGBM'] = best_model
         
@@ -1083,7 +1377,9 @@ class AlzheimerModelTrainer:
             }
             
             # Randomized search
-            model = CatBoostClassifier(random_state=self.random_state, verbose=0)
+            model = CatBoostClassifier(random_state=self.random_state,
+                                       class_weights=getattr(self, 'catboost_class_weights', None),
+                                       verbose=0)
             random_search = RandomizedSearchCV(
                 model, param_grid,
                 n_iter=20, cv=5,
@@ -1099,9 +1395,18 @@ class AlzheimerModelTrainer:
             print(f"[INFO] Best CV score: {random_search.best_score_:.4f}")
         else:
             # Train with default parameters
-            best_model = CatBoostClassifier(random_state=self.random_state, verbose=0)
+            best_model = CatBoostClassifier(random_state=self.random_state,
+                                            class_weights=getattr(self, 'catboost_class_weights', None),
+                                            verbose=0)
             best_model.fit(self.X_train, self.y_train)
         
+        # Optionally calibrate before threshold tuning
+        if getattr(self, 'calibrate_probabilities', False):
+            best_model = self._calibrate_model(best_model, method='sigmoid')
+
+        # Refit on train+validation (if validation exists)
+        best_model = self._refit_on_train_val(best_model)
+
         # Store the trained model
         self.trained_models['CatBoost'] = best_model
         
@@ -1124,14 +1429,19 @@ class AlzheimerModelTrainer:
         
         # Define base estimators (use previously trained models or create new ones)
         base_estimators = [
-            ('rf', RandomForestClassifier(n_estimators=100, random_state=self.random_state)),
-            ('xgb', XGBClassifier(random_state=self.random_state, eval_metric='logloss')),
-            ('lgbm', LGBMClassifier(random_state=self.random_state, verbose=-1)),
-            ('svm', SVC(probability=True, random_state=self.random_state))
+            ('rf', RandomForestClassifier(n_estimators=100, random_state=self.random_state,
+                                          class_weight=getattr(self, 'sklearn_class_weight', 'balanced'))),
+            ('xgb', XGBClassifier(random_state=self.random_state, eval_metric='logloss',
+                                  scale_pos_weight=getattr(self, 'xgb_scale_pos_weight', 1.0))),
+            ('lgbm', LGBMClassifier(random_state=self.random_state,
+                                   class_weight=getattr(self, 'sklearn_class_weight', None), verbose=-1)),
+            ('svm', SVC(probability=True, random_state=self.random_state,
+                        class_weight=getattr(self, 'sklearn_class_weight', 'balanced')))
         ]
         
         # Define meta-classifier (final estimator)
-        meta_classifier = LogisticRegression(random_state=self.random_state, max_iter=1000)
+        meta_classifier = LogisticRegression(random_state=self.random_state, max_iter=1000,
+                             class_weight=getattr(self, 'sklearn_class_weight', 'balanced'))
         
         # Create stacking classifier
         stacking_model = StackingClassifier(
@@ -1146,7 +1456,12 @@ class AlzheimerModelTrainer:
         
         # Train the stacking model
         stacking_model.fit(self.X_train, self.y_train)
-        
+        # Optionally calibrate the stacking model before threshold tuning
+        if getattr(self, 'calibrate_probabilities', False):
+            stacking_model = self._calibrate_model(stacking_model, method='sigmoid')
+        # Refit on train+validation (if validation exists)
+        stacking_model = self._refit_on_train_val(stacking_model)
+
         # Store the trained model
         self.trained_models['Stacking Ensemble'] = stacking_model
         
@@ -1169,8 +1484,19 @@ class AlzheimerModelTrainer:
         """
         print(f"\n[EVALUATION] Evaluating {model_name}...")
         
-        # Make predictions on test set
-        y_pred = model.predict(self.X_test)
+        # Make predictions on test set. If we have a tuned threshold from validation, use it for binary probs.
+        use_threshold = False
+        thresh = None
+        if model_name in self.best_thresholds:
+            thresh = self.best_thresholds[model_name]
+            if thresh is not None and hasattr(model, 'predict_proba') and len(np.unique(self.y_test)) == 2:
+                use_threshold = True
+
+        if use_threshold:
+            proba = model.predict_proba(self.X_test)[:, 1]
+            y_pred = (proba >= thresh).astype(int)
+        else:
+            y_pred = model.predict(self.X_test)
         
         # Calculate metrics on test set
         accuracy = accuracy_score(self.y_test, y_pred)
@@ -1239,7 +1565,56 @@ class AlzheimerModelTrainer:
         cm_path = model_plot_dir / 'confusion_matrix.png'
         plt.savefig(cm_path, dpi=200)
         plt.close()
-        print(f"[INFO] Confusion matrix plot saved to: {cm_path}")
+        print(f"[INFO] Confusion matrix plot saved to: {cm_path.name}")
+
+        # Decision Tree visualization (if applicable) - improved quality
+        try:
+            if model_name == 'Decision Tree' or hasattr(model, 'tree_'):
+                try:
+                    # Prefer Graphviz rendering for crisp vector output if available
+                    try:
+                        from sklearn.tree import export_graphviz
+                        import graphviz
+                        dot_data = export_graphviz(
+                            model,
+                            out_file=None,
+                            feature_names=self.feature_names,
+                            class_names=[str(c) for c in np.unique(self.y)],
+                            filled=True,
+                            rounded=True,
+                            special_characters=True
+                        )
+                        graph = graphviz.Source(dot_data)
+                        svg_path = model_plot_dir / 'decision_tree.svg'
+                        # Render SVG (graphviz will create the file)
+                        graph.format = 'svg'
+                        graph.render(filename=str(svg_path.with_suffix('')), cleanup=True)
+                        print(f"[INFO] Decision tree plot saved to: {svg_path.name}")
+                    except Exception:
+                        # Fallback to Matplotlib plotting with higher resolution
+                        from sklearn import tree as sktree
+                        plt.figure(figsize=(30, 15))
+                        sktree.plot_tree(
+                            model,
+                            feature_names=self.feature_names,
+                            class_names=[str(c) for c in np.unique(self.y)],
+                            filled=True,
+                            rounded=True,
+                            proportion=False,
+                            fontsize=10
+                        )
+                        # Save both SVG (vector) and high-dpi PNG
+                        svg_path = model_plot_dir / 'decision_tree.svg'
+                        png_path = model_plot_dir / 'decision_tree.png'
+                        plt.savefig(svg_path, dpi=300, bbox_inches='tight')
+                        plt.savefig(png_path, dpi=300, bbox_inches='tight')
+                        plt.close()
+                        print(f"[INFO] Decision tree plot saved to: {png_path.name}")
+                except Exception as ex_plot:
+                    print(f"[WARNING] Could not plot decision tree (plotting error): {ex_plot}")
+        except Exception:
+            # guard: if model lacks attributes or plotting libs unavailable
+            pass
 
         # ROC Curve Plot (if possible)
         try:
@@ -1259,7 +1634,7 @@ class AlzheimerModelTrainer:
                     roc_path = model_plot_dir / 'roc_curve.png'
                     plt.savefig(roc_path, dpi=200)
                     plt.close()
-                    print(f"[INFO] ROC curve plot saved to: {roc_path}")
+                    print(f"[INFO] ROC curve plot saved to: {roc_path.name}")
                 else:
                     # Multiclass ROC curve
                     for i in range(n_classes):
@@ -1274,7 +1649,7 @@ class AlzheimerModelTrainer:
                     roc_path = model_plot_dir / 'roc_curve.png'
                     plt.savefig(roc_path, dpi=200)
                     plt.close()
-                    print(f"[INFO] Multiclass ROC curve plot saved to: {roc_path}")
+                    print(f"[INFO] Multiclass ROC curve plot saved to: {roc_path.name}")
         except Exception as e:
             print(f"[WARNING] Could not plot ROC curve: {str(e)}")
 
@@ -1296,7 +1671,16 @@ class AlzheimerModelTrainer:
             else:
                 # Use subset for KernelExplainer (it's slow)
                 X_test_shap = self.X_test[:50]
-                explainer = shap.KernelExplainer(model.predict, self.X_train)
+                # Use summarized background if available or compute it
+                bg = getattr(self, 'shap_background', None)
+                if bg is None:
+                    try:
+                        # Prefer kmeans summarization if available
+                        bg = shap.kmeans(self.X_train, self.shap_background_k)
+                    except Exception:
+                        bg = shap.sample(self.X_train, self.shap_background_k)
+                    self.shap_background = bg
+                explainer = shap.KernelExplainer(model.predict, bg)
                 shap_values = explainer.shap_values(X_test_shap, nsamples=100)
 
             # Create SHAP plot with proper sizing and labels
@@ -1311,7 +1695,7 @@ class AlzheimerModelTrainer:
             shap_path = model_plot_dir / 'shap_summary.png'
             plt.savefig(shap_path, dpi=200, bbox_inches='tight')
             plt.close()
-            print(f"[INFO] SHAP summary plot saved to: {shap_path}")
+            print(f"[INFO] SHAP summary plot saved to: {shap_path.name}")
         except Exception as e:
             print(f"[WARNING] Could not generate SHAP plot: {str(e)}")
 
@@ -1336,10 +1720,12 @@ class AlzheimerModelTrainer:
                 plt.tight_layout()
                 plt.savefig(lime_path, dpi=200, bbox_inches='tight')
                 plt.close()
-                print(f"[INFO] LIME explanation plot saved to: {lime_path}")
+                print(f"[INFO] LIME explanation plot saved to: {lime_path.name}")
         except Exception as e:
             print(f"[WARNING] Could not generate LIME explanations: {str(e)}")
 
+        # If model was calibrated, ensure predictions/thresholding will use calibrated object
+
         # Confusion Matrix Plot
         cm = confusion_matrix(self.y_test, y_pred)
         plt.figure(figsize=(6, 5))
@@ -1351,7 +1737,7 @@ class AlzheimerModelTrainer:
         cm_path = model_plot_dir / 'confusion_matrix.png'
         plt.savefig(cm_path, dpi=200)
         plt.close()
-        print(f"[INFO] Confusion matrix plot saved to: {cm_path}")
+        print(f"[INFO] Confusion matrix plot saved to: {cm_path.name}")
 
         # ROC Curve Plot (if possible)
         try:
@@ -1371,7 +1757,7 @@ class AlzheimerModelTrainer:
                     roc_path = model_plot_dir / 'roc_curve.png'
                     plt.savefig(roc_path, dpi=200)
                     plt.close()
-                    print(f"[INFO] ROC curve plot saved to: {roc_path}")
+                    print(f"[INFO] ROC curve plot saved to: {roc_path.name}")
                 else:
                     # Multiclass ROC curve
                     for i in range(n_classes):
@@ -1386,7 +1772,7 @@ class AlzheimerModelTrainer:
                     roc_path = model_plot_dir / 'roc_curve.png'
                     plt.savefig(roc_path, dpi=200)
                     plt.close()
-                    print(f"[INFO] Multiclass ROC curve plot saved to: {roc_path}")
+                    print(f"[INFO] Multiclass ROC curve plot saved to: {roc_path.name}")
         except Exception as e:
             print(f"[WARNING] Could not plot ROC curve: {str(e)}")
 
@@ -1408,7 +1794,7 @@ class AlzheimerModelTrainer:
         cm_path = model_plot_dir / 'confusion_matrix.png'
         plt.savefig(cm_path, dpi=200)
         plt.close()
-        print(f"[INFO] Confusion matrix plot saved to: {cm_path}")
+        print(f"[INFO] Confusion matrix plot saved to: {cm_path.name}")
 
         # ROC Curve Plot (if possible)
         try:
@@ -1428,7 +1814,7 @@ class AlzheimerModelTrainer:
                     roc_path = model_plot_dir / 'roc_curve.png'
                     plt.savefig(roc_path, dpi=200)
                     plt.close()
-                    print(f"[INFO] ROC curve plot saved to: {roc_path}")
+                    print(f"[INFO] ROC curve plot saved to: {roc_path.name}")
                 else:
                     # Multiclass ROC curve
                     for i in range(n_classes):
@@ -1443,7 +1829,7 @@ class AlzheimerModelTrainer:
                     roc_path = model_plot_dir / 'roc_curve.png'
                     plt.savefig(roc_path, dpi=200)
                     plt.close()
-                    print(f"[INFO] Multiclass ROC curve plot saved to: {roc_path}")
+                    print(f"[INFO] Multiclass ROC curve plot saved to: {roc_path.name}")
         except Exception as e:
             print(f"[WARNING] Could not plot ROC curve: {str(e)}")
 
@@ -1464,7 +1850,7 @@ class AlzheimerModelTrainer:
         cm_path = model_plot_dir / 'confusion_matrix.png'
         plt.savefig(cm_path, dpi=200)
         plt.close()
-        print(f"[INFO] Confusion matrix plot saved to: {cm_path}")
+        print(f"[INFO] Confusion matrix plot saved to: {cm_path.name}")
 
         # ROC Curve Plot (if possible)
         try:
@@ -1484,7 +1870,7 @@ class AlzheimerModelTrainer:
                     roc_path = model_plot_dir / 'roc_curve.png'
                     plt.savefig(roc_path, dpi=200)
                     plt.close()
-                    print(f"[INFO] ROC curve plot saved to: {roc_path}")
+                    print(f"[INFO] ROC curve plot saved to: {roc_path.name}")
                 else:
                     # Multiclass ROC curve
                     for i in range(n_classes):
@@ -1499,7 +1885,7 @@ class AlzheimerModelTrainer:
                     roc_path = model_plot_dir / 'roc_curve.png'
                     plt.savefig(roc_path, dpi=200)
                     plt.close()
-                    print(f"[INFO] Multiclass ROC curve plot saved to: {roc_path}")
+                    print(f"[INFO] Multiclass ROC curve plot saved to: {roc_path.name}")
         except Exception as e:
             print(f"[WARNING] Could not plot ROC curve: {str(e)}")
     
@@ -1613,7 +1999,7 @@ class AlzheimerModelTrainer:
         # Save figure
         output_path = self.output_dir / 'model_comparison.png'
         plt.savefig(output_path, dpi=300, bbox_inches='tight')
-        print(f"[INFO] Model comparison plot saved to: {output_path}")
+        print(f"[INFO] Model comparison plot saved to: {output_path.name}")
         plt.close()
     
     
@@ -1644,7 +2030,7 @@ class AlzheimerModelTrainer:
         with open(results_path, 'w') as f:
             json.dump(json_results, f, indent=4)
         
-        print(f"[SUCCESS] Model results saved to: {results_path}")
+        print(f"[SUCCESS] Model results saved to: {results_path.name}")
         
         # Save trained models using joblib
         import joblib
@@ -1657,7 +2043,7 @@ class AlzheimerModelTrainer:
         for model_name, model in self.trained_models.items():
             model_path = models_dir / f"{model_name.replace(' ', '_').lower()}.pkl"
             joblib.dump(model, model_path)
-            print(f"[SUCCESS] {model_name} saved to: {model_path}")
+            print(f"[SUCCESS] {model_name} saved to: {model_path.name}")
 
         # Save the best model separately as best_model.pkl
         # Find best model by highest test F1-score
@@ -1665,7 +2051,7 @@ class AlzheimerModelTrainer:
         best_model = self.trained_models[best_model_name]
         best_model_path = models_dir / "best_model.pkl"
         joblib.dump(best_model, best_model_path)
-        print(f"[SUCCESS] Best model ({best_model_name}) saved to: {best_model_path}")
+        print(f"[SUCCESS] Best model ({best_model_name}) saved to: {best_model_path.name}")
         
         # Save preprocessing objects
         preprocessing_path = models_dir / 'preprocessing.pkl'
@@ -1675,10 +2061,18 @@ class AlzheimerModelTrainer:
             'feature_names': self.feature_names
         }
         joblib.dump(preprocessing_objects, preprocessing_path)
-        print(f"[SUCCESS] Preprocessing objects saved to: {preprocessing_path}")
+        print(f"[SUCCESS] Preprocessing objects saved to: {preprocessing_path.name}")
     
     
     def run_full_pipeline(self, tune_hyperparameters=True):
+        """
+        Run the complete model training pipeline.
+
+        New optional behavior added:
+        - Resampling method and params: controlled via `self.resampler_method` and `self.resampler_params`.
+        - Probability calibration: controlled via `self.calibrate_probabilities`.
+        - Sample-weight use for MLP: `self.use_sample_weight_for_mlp`.
+        """
         """
         Run the complete model training pipeline.
         
@@ -1695,7 +2089,8 @@ class AlzheimerModelTrainer:
         print("ALZHEIMER'S DISEASE PREDICTION - MODEL TRAINING PIPELINE")
         print("="*70)
         print(f"Start time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-        print(f"Log file: {self.log_file_path}")
+        # Print only the filename (avoid long absolute path in console)
+        print(f"Log file: {self.log_file_path.name}")
         
         try:
             # Step 1: Load data
@@ -1718,6 +2113,9 @@ class AlzheimerModelTrainer:
             
             # Step 7: Scale features
             self.scale_features(method='standard')
+            # Step 8: Optionally apply resampling to mitigate class imbalance (SMOTE/ADASYN)
+            # `self.resampler_method` and `self.resampler_params` control behavior
+            self.apply_resampling(method=getattr(self, 'resampler_method', 'smote'))
             
             # Train all models
             print("\n" + "="*70)
@@ -1746,7 +2144,7 @@ class AlzheimerModelTrainer:
             print("[COMPLETED] Pipeline Execution Completed Successfully!")
             print("="*70)
             print(f"End time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-            print(f"\n[INFO] Complete log saved to: {self.log_file_path}")
+            print(f"\n[INFO] Complete log saved to: {self.log_file_path.name}")
             
         except Exception as e:
             print(f"\n[ERROR] Pipeline execution failed: {str(e)}")
@@ -1757,7 +2155,7 @@ class AlzheimerModelTrainer:
             if self.tee_output:
                 sys.stdout = self.tee_output.terminal
                 self.tee_output.close()
-                print(f"\n[INFO] Training log saved to: {self.log_file_path}")
+                print(f"\n[INFO] Training log saved to: {self.log_file_path.name}")
 
 
 # ============================================================================

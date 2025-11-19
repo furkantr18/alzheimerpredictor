@@ -1,21 +1,61 @@
 """
 Alzheimer's Disease Prediction - Inference Script
 ==================================================
+
 This script loads a trained model and makes predictions on new patient data.
 
-Usage:
-------
-1. For single patient prediction:
-   python src/predict.py --patient_data "path/to/patient_data.csv"
+Quick notes:
+- The script expects the trained model and preprocessing artifacts under
+    `src/model training/output/trained_models/` (the default `BEST_MODEL_PATH`).
+- If you run the script with no `--batch` and a default test file exists at
+    `src/data/test/test_data_raw_samples_100.csv`, the script will use that file.
 
-2. For interactive prediction:
-   python src/predict.py --interactive
+Usage (PowerShell / Windows):
+---------------------------------
+- Run batch prediction on a specific CSV (recommended from project root):
 
-3. For batch prediction:
-   python src/predict.py --batch "path/to/patients_batch.csv"
+    python src/prediction/predict.py --batch src/data/test/test_data_raw_samples_100.csv
+
+- Run batch prediction using the default bundled test file (no --batch):
+
+    python src/prediction/predict.py
+
+- Run single-patient prediction from a CSV (script will print formatted result):
+
+    python src/prediction/predict.py --patient path/to/single_patient.csv
+
+- Interactive mode (enter values in terminal):
+
+    python src/prediction/predict.py --interactive
+
+Common flags:
+- `--output` / `-o` : path to save batch predictions CSV (default: `src/prediction/test_eval_results.csv`).
+- `--threshold` / `-t`: probability threshold for labeling Alzheimer's class (default: 0.5).
+- `--save-normalized` : save the normalized test data CSV.
+- `--save-sqlite` : save normalized test data to a SQLite DB (table `normalized_test`).
+- `--model` / `-m` : use a specific model file instead of the default `best_model.pkl`.
+- `--min-confidence` : mark predictions `uncertain` when |p(AD)-0.5| < value (default 0.1).
+
+What the script produces on batch runs:
+- A saved CSV with per-row predictions: default `src/prediction/test_eval_results.csv`.
+    When the input CSV contains a `Diagnosis` column, the saved CSV will include
+    `y_true` and a boolean `correct` column.
+- A confusion matrix plot saved to `src/prediction/confusion_matrix.png` (when
+    `Diagnosis` is present).
+- Console output shows evaluation metrics and a compact batch summary.
+
+Examples:
+    # Use default test CSV and save results to default location
+    python src/prediction/predict.py
+
+    # Run with a specific threshold and custom output path
+    python src/prediction/predict.py --batch data/my_batch.csv --threshold 0.3 --output results/preds.csv
+
+Notes:
+- Run commands from the project root for the relative paths above to work.
+- If you need the script to keep printing the full table to console, set
+    `save_normalized` or inspect the saved CSV with Excel or pandas.
 """
-# hasnt been tested yet - please test before using 
-# no test dataset ....
 
 import pandas as pd
 import numpy as np
@@ -26,10 +66,112 @@ from pathlib import Path
 import sys
 import os
 import sqlite3
+import matplotlib.pyplot as plt
+import warnings
+
+# Suppress sklearn feature-name UserWarnings that arise when models in an
+# ensemble/pipeline were fitted inconsistently (some with and some without
+# feature names). These warnings are non-fatal and noisy for inference.
+warnings.filterwarnings("ignore", message=".*feature names.*")
+
+
+def _shorten_to_src(path_like):
+    """Return a string path starting at the repository `src/` folder when possible.
+
+    Examples:
+      'D:\\...\\src\\model training\\output\\trained_models\\scaler.pkl' ->
+      'src\\model training\\output\\trained_models\\scaler.pkl'
+
+    Falls back to the original string if `src` cannot be found.
+    """
+    try:
+        s = str(path_like)
+        # Normalize separators so we can reliably search for '/src/'
+        s_norm = s.replace('\\', '/')
+        idx = s_norm.find('/src/')
+        if idx >= 0:
+            t = s_norm[idx+1:]
+            return t.replace('/', os.sep)
+        # If '/src/' not found, try 'src/' at start
+        idx2 = s_norm.find('src/')
+        if idx2 >= 0:
+            t = s_norm[idx2:]
+            return t.replace('/', os.sep)
+        return s
+    except Exception:
+        return str(path_like)
 
 # Add parent directory to path for config import
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from config import BEST_MODEL_PATH, PROCESSED_DATA_PATH, PREDICTIONS_DIR, DEFAULT_BATCH_PREDICTIONS_CSV
+
+
+def model_supports_feature_names(model) -> bool:
+    """
+    Module-level helper to determine whether `model` or any nested estimator
+    was fitted with feature names (`feature_names_in_`). This inspects common
+    sklearn wrappers such as Pipeline, Voting/Stacking, GridSearchCV, etc.
+    """
+    def _check(m):
+        if m is None:
+            return False
+        try:
+            if hasattr(m, 'feature_names_in_'):
+                return True
+        except Exception:
+            pass
+
+        # Pipeline: check steps
+        try:
+            steps = getattr(m, 'steps', None)
+            if steps:
+                for _name, step in steps:
+                    if _check(step):
+                        return True
+        except Exception:
+            pass
+
+        # Named estimators
+        try:
+            named = getattr(m, 'named_estimators', None)
+            if named:
+                for est in named.values():
+                    if _check(est):
+                        return True
+        except Exception:
+            pass
+
+        # Estimators list/tuples (e.g., ensemble.estimators_)
+        for attr in ('estimators_', 'estimators'):
+            try:
+                ests = getattr(m, attr, None)
+                if ests:
+                    for est in ests:
+                        if isinstance(est, tuple) and len(est) == 2:
+                            est = est[1]
+                        if _check(est):
+                            return True
+            except Exception:
+                pass
+
+        # Meta-estimators
+        try:
+            final = getattr(m, 'final_estimator', None)
+            if final and _check(final):
+                return True
+        except Exception:
+            pass
+
+        try:
+            best = getattr(m, 'best_estimator_', None)
+            if best and _check(best):
+                return True
+        except Exception:
+            pass
+
+        return False
+
+    return _check(model)
 
 
 class AlzheimerPredictor:
@@ -60,19 +202,37 @@ class AlzheimerPredictor:
         try:
             # Load the trained model
             self.model = joblib.load(self.model_path)
-            print(f"[SUCCESS] Model loaded from: {self.model_path}")
+            print(f"[SUCCESS] Model loaded from: {_shorten_to_src(self.model_path)}")
             
             # Load the scaler
             scaler_path = self.model_dir / "scaler.pkl"
             self.scaler = joblib.load(scaler_path)
-            print(f"[SUCCESS] Scaler loaded from: {scaler_path}")
+            print(f"[SUCCESS] Scaler loaded from: {_shorten_to_src(scaler_path)}")
             
             # Load preprocessing objects (label encoders, feature names, etc.)
             preprocessing_path = self.model_dir / "preprocessing.pkl"
             preprocessing = joblib.load(preprocessing_path)
             self.label_encoders = preprocessing['label_encoders']
             self.feature_names = preprocessing['feature_names']
-            print(f"[SUCCESS] Preprocessing objects loaded from: {preprocessing_path}")
+            # Load normalization metadata if provided in preprocessing object
+            self.normalization_metadata = preprocessing.get('normalization_metadata', None)
+            # If normalization metadata wasn't included in the saved preprocessing object,
+            # try to load the processing metadata produced by the data normalization script.
+            if self.normalization_metadata is None:
+                try:
+                    proc_meta_path = Path(PROCESSED_DATA_PATH).parent / 'processing_metadata.json'
+                    if proc_meta_path.exists():
+                        with open(proc_meta_path, 'r', encoding='utf-8') as fh:
+                            self.normalization_metadata = json.load(fh)
+                        print(f"[INFO] Loaded normalization metadata from: {_shorten_to_src(proc_meta_path)}")
+                    else:
+                        # Fallback to empty metadata structure to avoid attribute errors later
+                        self.normalization_metadata = {'numeric': {}, 'binary_cols': [], 'boolean_cols': [], 'categorical_mappings': {}}
+                        print(f"[WARNING] No normalization metadata found; using empty defaults")
+                except Exception as e:
+                    print(f"[WARNING] Could not load processing metadata: {e}")
+                    self.normalization_metadata = {'numeric': {}, 'binary_cols': [], 'boolean_cols': [], 'categorical_mappings': {}}
+            print(f"[SUCCESS] Preprocessing objects loaded from: {_shorten_to_src(preprocessing_path)}")
             
             # Get diagnosis classes
             if 'target' in self.label_encoders:
@@ -91,8 +251,6 @@ class AlzheimerPredictor:
             raise
     
     
-<<<<<<< HEAD
-=======
     def normalize_test_data(self, data):
         """
         Normalize test data using the same normalization parameters from training.
@@ -124,7 +282,7 @@ class AlzheimerPredictor:
         
         return data
     
-    def _post_normalization_pipeline(self, data: pd.DataFrame) -> np.ndarray:
+    def _post_normalization_pipeline(self, data: pd.DataFrame) -> pd.DataFrame:
         """
         Apply steps after normalization: drop IDs, encode categoricals (if any),
         ensure feature order, and apply the saved scaler.
@@ -164,12 +322,14 @@ class AlzheimerPredictor:
         # Order columns
         df = df[self.feature_names]
 
-        # Apply scaler
-        X = self.scaler.transform(df)
+        # Apply scaler and return a DataFrame with the same feature names so
+        # downstream models receive input with valid feature names (avoids
+        # sklearn warning: "X does not have valid feature names...")
+        X_scaled = self.scaler.transform(df)
+        X = pd.DataFrame(X_scaled, columns=self.feature_names, index=df.index)
         return X
 
     
->>>>>>> b006ba8 (Update predict)
     def preprocess_input(self, patient_data):
         """
         Preprocess patient data to match the format expected by the model.
@@ -191,46 +351,12 @@ class AlzheimerPredictor:
         # Make a copy to avoid modifying original data
         data = patient_data.copy()
         
-<<<<<<< HEAD
-        # Drop non-predictive ID columns if present
-        id_columns = ['PatientID', 'DoctorInCharge', 'Diagnosis']
-        for col in id_columns:
-            if col in data.columns:
-                data = data.drop(columns=[col])
-        
-        # Encode categorical features using saved label encoders
-        for col, encoder in self.label_encoders.items():
-            if col != 'target' and col in data.columns:
-                try:
-                    data[col] = encoder.transform(data[col].astype(str))
-                except ValueError as e:
-                    print(f"[WARNING] Unknown category in {col}: {e}")
-                    # Handle unknown categories by using the most frequent class
-                    data[col] = encoder.transform([encoder.classes_[0]])[0]
-        
-        # Ensure all expected features are present
-        missing_features = set(self.feature_names) - set(data.columns)
-        if missing_features:
-            print(f"[WARNING] Missing features: {missing_features}")
-            print("[INFO] Setting missing features to 0")
-            for feature in missing_features:
-                data[feature] = 0
-        
-        # Select and order features to match training
-        data = data[self.feature_names]
-        
-        # Scale features using the saved scaler
-        scaled_data = self.scaler.transform(data)
-        
-        return scaled_data
-=======
         print("[INFO] Step 1: Normalizing test data...")
         data_norm = self.normalize_test_data(data)
         print("[INFO] Step 2-4: Dropping IDs, ordering features, scaling...")
         X = self._post_normalization_pipeline(data_norm)
         print("[INFO] Preprocessing complete!")
         return X
->>>>>>> b006ba8 (Update predict)
     
     
     def predict(self, patient_data, return_probabilities=True):
@@ -251,20 +377,25 @@ class AlzheimerPredictor:
         """
         # Load data from file if path is provided
         if isinstance(patient_data, str):
-            patient_data = pd.read_csv(patient_data)
-            print(f"[INFO] Loaded patient data from: {patient_data}")
+            patient_path = patient_data
+            patient_data = pd.read_csv(patient_path)
+            print(f"[INFO] Loaded patient data from: {patient_path}")
         
         # Preprocess the input
         X = self.preprocess_input(patient_data)
-        
+        # Choose input type depending on whether the model (or any nested
+        # estimator) was fitted with feature names. Pipeline/ensemble models
+        # may include nested estimators trained with or without names.
+        model_input = X if model_supports_feature_names(self.model) else X.values
+
         # Make prediction
-        prediction = self.model.predict(X)[0]
+        prediction = self.model.predict(model_input)[0]
         diagnosis = self.diagnosis_classes[prediction]
         
         # Get probability scores if model supports it
         probabilities = None
         if return_probabilities and hasattr(self.model, 'predict_proba'):
-            proba = self.model.predict_proba(X)[0]
+            proba = self.model.predict_proba(model_input)[0]
             probabilities = {
                 class_name: float(prob) 
                 for class_name, prob in zip(self.diagnosis_classes, proba)
@@ -297,7 +428,7 @@ class AlzheimerPredictor:
         pd.DataFrame
             DataFrame with predictions
         """
-        print(f"[INFO] Loading batch data from: {patient_data_path}")
+        print(f"[INFO] Loading batch data from: {_shorten_to_src(patient_data_path)}")
         df = pd.read_csv(patient_data_path)
         
         print(f"[INFO] Making predictions for {len(df)} patients...")
@@ -327,10 +458,13 @@ class AlzheimerPredictor:
 
             # Continue with post-normalization pipeline
             X = self._post_normalization_pipeline(df_norm)
-            
+
+            # Choose input type for model calls (DataFrame or numpy array)
+            model_input = X if model_supports_feature_names(self.model) else X.values
+
             # Make predictions for all patients
             if hasattr(self.model, 'predict_proba'):
-                proba_all = self.model.predict_proba(X)
+                proba_all = self.model.predict_proba(model_input)
                 # Determine index of Alzheimer's class
                 if isinstance(self.diagnosis_classes, (list, np.ndarray)) and len(self.diagnosis_classes) == 2:
                     try:
@@ -343,7 +477,7 @@ class AlzheimerPredictor:
                 # Apply configurable threshold on Alzheimer's probability
                 predictions = (proba_all[:, ad_index] >= float(threshold)).astype(int)
             else:
-                predictions = self.model.predict(X)
+                predictions = self.model.predict(model_input)
             
             # Get probabilities if available
             probabilities = None
@@ -412,8 +546,9 @@ class AlzheimerPredictor:
                 f1 = f1_score(y_true, y_pred, zero_division=0)
                 cm = confusion_matrix(y_true, y_pred)
 
-                # Attach ground truth for saved CSV
-                results_df.insert(1, 'y_true', y_true)
+                # Attach ground truth and correctness flag for saved CSV
+                results_df['y_true'] = y_true
+                results_df['correct'] = (results_df['prediction_code'].astype(int) == results_df['y_true']).astype(bool)
 
                 print("\n" + "="*70)
                 print("EVALUATION (from predict.py - using provided Diagnosis column)")
@@ -422,8 +557,27 @@ class AlzheimerPredictor:
                 print(f"Precision: {prec:.4f}")
                 print(f"Recall   : {rec:.4f}")
                 print(f"F1-score : {f1:.4f}")
-                print("Confusion Matrix [ [TN FP] [FN TP] ]:")
-                print(cm)
+                # Plot and save confusion matrix instead of printing raw numbers
+                try:
+                    from sklearn.metrics import ConfusionMatrixDisplay
+                    # Ensure predictions directory exists
+                    Path(PREDICTIONS_DIR).mkdir(parents=True, exist_ok=True)
+                    fig, ax = plt.subplots(figsize=(5, 4))
+                    disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=["Cognitive Normal", "Alzheimer's Disease"])
+                    disp.plot(ax=ax, cmap='Blues', values_format='d')
+                    ax.set_title('Confusion Matrix')
+                    cm_path = Path(PREDICTIONS_DIR) / 'confusion_matrix.png'
+                    plt.savefig(cm_path, bbox_inches='tight', dpi=150)
+                    plt.close(fig)
+                    print(f"[INFO] Confusion matrix plot saved to: {cm_path}")
+                except Exception as e:
+                    print(f"[WARNING] Could not plot confusion matrix: {e}")
+
+                # Capture TN/FP/FN/TP for summary output
+                try:
+                    tn, fp, fn, tp = cm.ravel()
+                except Exception:
+                    tn = fp = fn = tp = None
 
                 print("\nCLASSIFICATION REPORT:")
                 print(classification_report(y_true, y_pred, target_names=["Cognitive Normal", "Alzheimer's Disease"]))
@@ -444,18 +598,24 @@ class AlzheimerPredictor:
             except Exception as e:
                 print(f"[WARNING] Could not compute evaluation metrics: {e}")
         
-        # Reorder columns
+        # Reorder columns and append correctness flag at the end (before probabilities)
         cols = ['PatientID', 'diagnosis', 'prediction_code', 'risk_score']
+        # Prepare any small diagnostic columns that should appear before probabilities
+        extra_cols = []
+        for c in ['prob_ad', 'margin', 'uncertain', 'y_true']:
+            if c in results_df.columns:
+                extra_cols.append(c)
+
         if 'probabilities' in results_df.columns:
             # Expand probabilities into separate columns
             prob_df = pd.DataFrame(results_df['probabilities'].tolist())
             prob_df.columns = [f'prob_{col}' for col in prob_df.columns]
-            # Keep additional diagnostics if present
-            extra_cols = []
-            for c in ['prob_ad', 'margin', 'uncertain']:
-                if c in results_df.columns:
-                    extra_cols.append(c)
-            results_df = pd.concat([results_df[cols + extra_cols], prob_df], axis=1)
+            # Build final DataFrame: main cols + extras (without 'correct'), then prob columns, then 'correct' at the end
+            extras_wo_correct = [c for c in extra_cols if c != 'correct']
+            final_df = pd.concat([results_df[cols + extras_wo_correct], prob_df], axis=1)
+            if 'correct' in results_df.columns:
+                final_df['correct'] = results_df['correct'].astype(bool).values
+            results_df = final_df
         
         # Determine default output path if not provided
         save_path = output_path
@@ -464,19 +624,36 @@ class AlzheimerPredictor:
             os.makedirs(PREDICTIONS_DIR, exist_ok=True)
             save_path = DEFAULT_BATCH_PREDICTIONS_CSV
 
-        # Save results always, and also print a compact view
+        # Save results to CSV (do not print full table to console)
         try:
             results_df.to_csv(save_path, index=False)
-            print(f"[SUCCESS] Predictions saved to: {save_path}")
+            print(f"[SUCCESS] Predictions saved to: {_shorten_to_src(save_path)}")
+            # Also try saving an Excel copy (.xlsx). If save_path ends with .csv, replace suffix.
+            try:
+                xlsx_path = Path(save_path)
+                if xlsx_path.suffix.lower() == '.csv':
+                    xlsx_path = xlsx_path.with_suffix('.xlsx')
+                else:
+                    xlsx_path = xlsx_path.parent / (xlsx_path.name + '.xlsx')
+                results_df.to_excel(xlsx_path, index=False)
+                print(f"[SUCCESS] Predictions also saved to Excel: {_shorten_to_src(xlsx_path)}")
+            except Exception as e:
+                print(f"[WARNING] Could not save Excel file: {e} (ensure 'openpyxl' is installed)")
         except Exception as e:
             print(f"[ERROR] Failed to save predictions to {save_path}: {e}")
 
-        # Print a readable summary to console
-        print("\n" + "="*70)
-        print("BATCH PREDICTION RESULTS")
-        print("="*70)
-        print(results_df.to_string(index=False))
-        
+        # Print compact summary only
+        try:
+            print("\n" + "="*70)
+            print("BATCH PREDICTION SUMMARY")
+            print("="*70)
+            print(f"Total rows: {len(results_df)}")
+            if 'y_true' in results_df.columns and 'correct' in results_df.columns:
+                correct = int(results_df['correct'].sum())
+                print(f"Correct predictions: {correct}/{len(results_df)} ({correct/len(results_df):.2%})")
+        except Exception:
+            pass
+
         return results_df
     
     
@@ -632,7 +809,12 @@ Examples:
                        help='Path to specific model file (default: best_model.pkl)')
     
     args = parser.parse_args()
-    
+    # If no --batch provided but a default test file exists in src/data/test/, use it
+    default_test_path = Path(__file__).parent.parent / 'data' / 'test' / 'test_data_raw_samples_100.csv'
+    if not args.batch and default_test_path.exists():
+        args.batch = str(default_test_path)
+        print(f"[INFO] No --batch provided; using default test file: {_shorten_to_src(args.batch)}")
+
     # Initialize predictor
     try:
         predictor = AlzheimerPredictor(model_path=args.model)

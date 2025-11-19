@@ -25,8 +25,3 @@ dist/
 .DS_Store
 Thumbs.db
 
-# Model training outputs
-src/model training/output/
-
-# Data analysis outputs
-src/data analysis/output_exploratory_plots/
