@@ -21,3 +21,6 @@ lime>=0.2.0.1
 # Web API
 fastapi>=0.100.0
 uvicorn[standard]>=0.22.0
+
+# Imbalanced data handling
+imbalanced-learn==0.14.0
