@@ -25,3 +25,24 @@ dist/
 .DS_Store
 Thumbs.db
 
+# Output artifacts
+# Model training outputs
+model training/output/
+model training/output/**
+model training/trained_models/
+
+# CatBoost artifacts
+catboost_info/learn/
+catboost_info/tmp/
+catboost_info/*.tsv
+
+# Data analysis outputs
+data analysis/output_exploratory_plots/
+data analysis/output_exploratory_plots/**
+
+# Prediction outputs
+prediction/test_eval_results.csv
+
+# Processed data (regenerated)
+data/processed/processed_data.csv
+
