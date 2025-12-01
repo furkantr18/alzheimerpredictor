@@ -27,9 +27,10 @@ Thumbs.db
 
 # Output artifacts
 # Model training outputs
+src/model training/output/
+src/model training/output/**
 model training/output/
 model training/output/**
-model training/trained_models/
 
 # CatBoost artifacts
 catboost_info/learn/
@@ -37,7 +38,6 @@ catboost_info/tmp/
 catboost_info/*.tsv
 catboost_info/
 catboost_info/**
-
 
 # Data analysis outputs
 data analysis/output_exploratory_plots/
