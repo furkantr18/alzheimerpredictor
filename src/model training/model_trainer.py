@@ -1709,18 +1709,42 @@ class AlzheimerModelTrainer:
                 discretize_continuous=True
             )
             # Explain first 3 test samples
-            for i in range(min(3, len(self.X_test))):
-                exp = lime_explainer.explain_instance(
-                    np.array(self.X_test[i]),
-                    model.predict_proba,
-                    num_features=10
-                )
-                lime_path = model_plot_dir / f'lime_explanation_{i+1}.png'
-                exp.as_pyplot_figure()
-                plt.tight_layout()
-                plt.savefig(lime_path, dpi=200, bbox_inches='tight')
+            n_explain = min(3, len(self.X_test))
+            # Only create LIME explanations for the Stacking Ensemble and combine
+            # the per-instance explanations into a single image. Skip LIME for
+            # other models to reduce clutter and runtime.
+            if model_name == 'Stacking Ensemble':
+                fig, axes = plt.subplots(1, n_explain, figsize=(6 * n_explain, 6))
+                if n_explain == 1:
+                    axes = [axes]
+
+                for i in range(n_explain):
+                    exp = lime_explainer.explain_instance(
+                        np.array(self.X_test[i]),
+                        model.predict_proba,
+                        num_features=10
+                    )
+                    # Get feature-weight pairs and plot a horizontal bar chart
+                    pairs = exp.as_list()
+                    features = [p[0] for p in pairs]
+                    weights = [p[1] for p in pairs]
+
+                    ax = axes[i]
+                    y_pos = np.arange(len(features))[::-1]
+                    ax.barh(y_pos, weights, align='center', color=['#1f77b4' if w > 0 else '#ff7f0e' for w in weights])
+                    ax.set_yticks(y_pos)
+                    ax.set_yticklabels(features, fontsize=9)
+                    ax.set_xlabel('Contribution')
+                    ax.set_title(f'Instance {i+1}')
+
+                plt.suptitle(f'LIME explanations - {model_name}', fontsize=14)
+                plt.tight_layout(rect=[0, 0.03, 1, 0.95])
+                combined_path = model_plot_dir / 'lime_explanations_stacking.png'
+                plt.savefig(combined_path, dpi=200, bbox_inches='tight')
                 plt.close()
-                print(f"[INFO] LIME explanation plot saved to: {lime_path.name}")
+                print(f"[INFO] Combined LIME explanation plot saved to: {combined_path.name}")
+            else:
+                print(f"[INFO] Skipping LIME explanations for {model_name} (only generated for Stacking Ensemble).")
         except Exception as e:
             print(f"[WARNING] Could not generate LIME explanations: {str(e)}")
 
