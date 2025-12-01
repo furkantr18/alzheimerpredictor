@@ -35,6 +35,9 @@ model training/trained_models/
 catboost_info/learn/
 catboost_info/tmp/
 catboost_info/*.tsv
+catboost_info/
+catboost_info/**
+
 
 # Data analysis outputs
 data analysis/output_exploratory_plots/
