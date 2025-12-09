@@ -120,29 +120,8 @@ async def patient_data(req: Request):
         data = [data]
 
     # Assign a random PATIENT_ID if not provided
-    def _is_missing_id(v):
-        """Return True when the provided value should be treated as missing.
-
-        Treat None, empty string, 'null', 'none', 'nan' (case-insensitive),
-        and numpy NaN as missing.
-        """
-        try:
-            if v is None:
-                return True
-            if isinstance(v, float):
-                # catches Python float('nan')
-                return math.isnan(v)
-            if isinstance(v, (np.floating,)):
-                return np.isnan(v)
-            if isinstance(v, str):
-                s = v.strip().lower()
-                return s == "" or s in ("null", "none", "nan")
-            return False
-        except Exception:
-            return True
-
     for entry in data:
-        if _is_missing_id(entry.get('PATIENT_ID')) and _is_missing_id(entry.get('PatientID')):
+        if not entry.get('PATIENT_ID') and not entry.get('PatientID'):
             new_id = uuid.uuid4().hex[:12]
             entry['PATIENT_ID'] = new_id
             entry['PatientID'] = new_id
