@@ -268,18 +268,31 @@ class AlzheimerPredictor:
         data = data.copy()
         
         # Normalize numeric columns using min-max scaling
-        for col, params in self.normalization_metadata['numeric'].items():
-            if col in data.columns and params['scaled']:
-                min_val = params['min']
-                max_val = params['max']
-                if min_val != max_val:
+        for col, params in self.normalization_metadata.get('numeric', {}).items():
+            if col in data.columns and params.get('scaled', False):
+                min_val = params.get('min', None)
+                max_val = params.get('max', None)
+                # Coerce to numeric and fill missing values with a safe default
+                data[col] = pd.to_numeric(data[col], errors='coerce')
+                # Choose sensible fill value: prefer provided 'fill_value', else use min or 0
+                fill_val = params.get('fill_value', None)
+                if fill_val is None:
+                    fill_val = min_val if min_val is not None else 0
+                data[col] = data[col].fillna(fill_val)
+                if min_val is not None and max_val is not None and min_val != max_val:
                     data[col] = (data[col] - min_val) / (max_val - min_val)
-        
-        # Binary columns (0/1) - ensure they are integers
-        for col in self.normalization_metadata['binary_cols']:
+
+        # Binary columns (0/1) - coerce, fill NA as 0, and ensure integer type
+        for col in self.normalization_metadata.get('binary_cols', []):
             if col in data.columns:
-                data[col] = data[col].astype(int)
-        
+                data[col] = pd.to_numeric(data[col], errors='coerce').fillna(0).astype(int)
+
+        # Boolean columns - coerce and convert to integer 0/1 safely
+        for col in self.normalization_metadata.get('boolean_cols', []):
+            if col in data.columns:
+                # Interpret truthy values as 1, falsy/NA as 0
+                data[col] = pd.to_numeric(data[col], errors='coerce').fillna(0).astype(int)
+
         return data
     
     def _post_normalization_pipeline(self, data: pd.DataFrame) -> pd.DataFrame:
@@ -811,8 +824,9 @@ Examples:
     args = parser.parse_args()
     # If no --batch provided but a default test file exists in src/data/test/, use it
     default_test_path = Path(__file__).parent.parent / 'data' / 'test' / 'test_data_raw_samples_100.csv'
-    if not args.batch and default_test_path.exists():
-        args.batch = str(default_test_path)
+    incoming_data_path = Path(__file__).parent.parent / 'data' / 'incomingData' / 'patients_data.csv'
+    if not args.batch and incoming_data_path.exists():
+        args.batch = str(incoming_data_path)
         print(f"[INFO] No --batch provided; using default test file: {_shorten_to_src(args.batch)}")
 
     # Initialize predictor
