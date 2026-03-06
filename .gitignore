@@ -49,3 +49,12 @@ prediction/test_eval_results.csv
 # Processed data (regenerated)
 data/processed/processed_data.csv
 
+# Raw image data (local, not tracked)
+src/data/img_processed
+src/data/img_unprocessed
+
+# MRI model artifacts
+src/imgProcessing/output/
+src/imgProcessing/output/**
+
+

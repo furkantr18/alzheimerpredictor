@@ -3,6 +3,8 @@ numpy>=1.23.0
 matplotlib>=3.6.0
 seaborn>=0.12.0
 scipy>=1.9.0
+opencv-python>=4.8.0
+Pillow>=10.0.0
 
 # Optional but useful for reproducible environments
 python-dateutil>=2.8.2
@@ -14,6 +16,8 @@ xgboost>=2.0.0
 lightgbm>=4.0.0
 catboost>=1.2.0
 joblib>=1.3.0
+torch>=2.2.0
+torchvision>=0.17.0
 
 # Explainability
 shap>=0.42.1
