@@ -71,6 +71,18 @@ class ConsecutiveLabelXGB(BaseEstimator, ClassifierMixin):
         return self.classes_[self.predict_proba(X).argmax(1)]
 
 
+# Pickle by module name, not "__main__", so artifacts load from any script (API, evaluation).
+ConsecutiveLabelXGB.__module__ = "mri_model_trainer"
+
+
+def load_artifact(path):
+    """joblib.load that also reads artifacts pickled while this file ran as __main__."""
+    main_mod = sys.modules["__main__"]
+    if not hasattr(main_mod, "ConsecutiveLabelXGB"):
+        main_mod.ConsecutiveLabelXGB = ConsecutiveLabelXGB
+    return joblib.load(path)
+
+
 def make_model(name: str, params: dict, seed: int):
     if name == "LogisticRegression":
         return LogisticRegression(C=params["C"], max_iter=3000, class_weight="balanced", random_state=seed)

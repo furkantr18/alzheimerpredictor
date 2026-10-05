@@ -57,7 +57,8 @@ def main() -> None:
     if not args.model_path.exists():
         sys.exit(f"Model not found: {args.model_path}. Train first: python src/imgProcessing/mri_model_trainer.py")
     paths = ([args.image] if args.image else []) + (list(C.iter_images(args.image_dir)) if args.image_dir else [])
-    out = predict_paths(paths, joblib.load(args.model_path))
+    from mri_model_trainer import load_artifact
+    out = predict_paths(paths, load_artifact(args.model_path))
     args.output_csv.parent.mkdir(parents=True, exist_ok=True)
     out.to_csv(args.output_csv, index=False)
     print(out.head(10).to_string(index=False))

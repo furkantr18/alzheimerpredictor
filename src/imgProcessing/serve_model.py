@@ -48,8 +48,8 @@ def main() -> None:
                   "image_size": meta["image_size"], "weights_file": "best.pt"}
         metrics_val = meta["val_metrics"]
     else:
-        import joblib
-        art = joblib.load(args.classical)
+        from mri_model_trainer import load_artifact
+        art = load_artifact(args.classical)
         shutil.copy2(args.classical, dst / "model.joblib")
         name = art["model_name"]
         t = test.get(f"classical/{name}")

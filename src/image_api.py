@@ -69,8 +69,8 @@ def _load() -> dict:
                 model.load_state_dict(torch.load(_served_dir() / served["weights_file"], map_location=dev))
                 _state.update(model=model.to(dev).eval(), device=dev)
             else:
-                import joblib
-                _state["model"] = joblib.load(_served_dir() / served["weights_file"])
+                from mri_model_trainer import load_artifact
+                _state["model"] = load_artifact(_served_dir() / served["weights_file"])
             _state["loaded"] = True
             logger.info("MRI model loaded: %s", served.get("model_name"))
         except ImportError as err:

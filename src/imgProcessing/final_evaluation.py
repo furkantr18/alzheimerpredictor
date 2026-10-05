@@ -39,7 +39,8 @@ def subject_level(y, prob, groups) -> dict:
 
 
 def eval_classical(path: Path, cache: dict) -> tuple[dict, np.ndarray, pd.DataFrame]:
-    art = joblib.load(path)
+    from mri_model_trainer import load_artifact
+    art = load_artifact(path)
     split = art.get("split") or Path(art["split_file"]).stem
     if split not in cache:
         cache[split] = load_split(split)

@@ -84,7 +84,10 @@ def main() -> int:
         check("probabilities sum to ~1", abs(sum(probs.values()) - 1) < 1e-3, round(sum(probs.values()), 4))
         check("disclaimer present", "not a medical diagnosis" in j.get("disclaimer", ""))
         check("model name/version present", bool(j.get("model", {}).get("name")) and bool(j.get("model", {}).get("version")))
-        check("CORS header on response", h.get("access-control-allow-origin") == "*" or h.get("Access-Control-Allow-Origin") == "*")
+        hl = {k.lower(): v for k, v in h.items()}
+        # same CORS behaviour as the tabular endpoints (Starlette echoes the Origin when credentials are allowed)
+        check("CORS + private-network headers on response", hl.get("access-control-allow-origin") in ("*", "https://oracleapex.com")
+              and hl.get("access-control-allow-private-network") == "true", hl.get("access-control-allow-origin"))
         s2, j2, _ = post_file("/predict-mri", synthetic_png(fmt=".jpg"), "image/jpeg", "slice.jpg")
         check("/predict-mri JPEG -> 200", s2 == 200, s2)
         s3, j3, _ = post_file("/predict-mri/explain", synthetic_png())

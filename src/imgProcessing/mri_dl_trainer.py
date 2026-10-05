@@ -237,7 +237,7 @@ def train(cfg: TrainConfig, overfit_batch: bool = False, resume: bool = False) -
         ck = torch.load(ckpt_path, map_location=device, weights_only=False)
         model.load_state_dict(ck["model"]); opt.load_state_dict(ck["opt"]); sched.load_state_dict(ck["sched"]); scaler.load_state_dict(ck["scaler"])
         hist, best, start_epoch, bad_epochs = ck["hist"], ck["best"], ck["epoch"] + 1, ck["bad_epochs"]
-        torch.set_rng_state(ck["rng_torch"]); np.random.set_state(ck["rng_np"])
+        torch.set_rng_state(ck["rng_torch"].cpu()); np.random.set_state(ck["rng_np"])  # rng state must stay on CPU
         say(f"resumed from epoch {ck['epoch']}")
     say(f"device={device} cfg={json.dumps(asdict(cfg))}")
     say(f"train images={len(tr)} (originals {len(orig_idx)}, augmented {len(aug_idx)}), val originals={len(va)}; class weights={np.round(w, 3).tolist()}")
