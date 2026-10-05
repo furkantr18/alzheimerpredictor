@@ -78,4 +78,6 @@ Every run (method, config, task, repeat, outer fold, seed, inner score, outer me
 | Stage D/E, sensitivity, report | 1-1.5 h |
 
 ## Amendments
-(none yet)
+1. *2026-10-05, before any outer result.* Slice positions run 0..32 (33 values; every patient has 32 of them, one position missing) and the missing position depends on the class (ModerateDemented never has position 26; other classes miss 25 for part of the patients) because of the original file naming. Raw position would therefore leak a little class information. The flagged slice-position ablation uses **8 coarse bins (position // 4, capped at 7)**, which puts 25 and 26 in the same bin. 2.5D and MIL only use the *order* of slices, which carries no such information.
+2. *2026-10-05, before any outer result.* The bootstrap uses a numpy re-implementation of the metrics (`cv_core.fast_metrics`), verified equal to scikit-learn on 900 random cases (max difference 4e-16), because scikit-learn made 2,000 resamples take ~2.5 min per method. Point estimates still use scikit-learn.
+3. *2026-10-05, before any outer result.* BiomedCLIP needed `transformers` for its text tower (installed); RadImageNet skipped (no official ungated programmatic download for torch/timm). Handcrafted features are evaluated through the same nested pipeline as embeddings (`handcrafted.py` → `stage_a_heads.py --emb handcrafted`).
