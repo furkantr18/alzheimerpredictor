@@ -5,16 +5,15 @@ Trained on the TRAIN part of each split; held-out predictions are produced by
 final_evaluation.py (test, once). Here only validation numbers are printed.
 
 Settings
-  naive            split_naive   (archive/combined_images, random per image, like Yasemin's code)
-  image_group      split_image   (copies grouped with their source image; slices of one patient may cross)
-  subject_group    split_subject (pseudo-patient grouping; the honest setting)
+  naive                   split_naive   (archive/combined_images incl. copies, random per image, like Yasemin's code)
+  image_level_originals   split_image   (originals only, random per image: no copies, but slices of one patient cross)
+  subject_group           split_subject (originals only, pseudo-patient grouping: the honest setting)
 Sanity checks
-  naive_shuffled_by_source    labels replaced by a random label PER SOURCE SUBJECT (all copies/slices of a
-                              subject share it). Labels carry no disease information, so any held-out accuracy
-                              above chance can only come from leakage (memorised copies) -> real-data version of
-                              the synthetic test in IMAGE_DIAGNOSIS.md B2.
-  subject_shuffled_by_source  same random labels under the subject split: should be at chance.
-  majority                    always the most frequent training class.
+  *_shuffled_by_*   labels replaced by a random label PER SOURCE SUBJECT (all copies/slices of a subject share
+                    it). Labels then carry no disease information, so held-out accuracy above chance can only
+                    come from leakage (memorised copies/patients): the real-data version of the synthetic test
+                    in IMAGE_DIAGNOSIS.md B2. Under the subject split it must be at chance.
+  majority          always the most frequent training class.
 
 Usage: python src/imgProcessing/leakage_experiment.py
 Output: output/models/leakage_<setting>.joblib
@@ -46,10 +45,11 @@ def simple_model() -> Pipeline:
 
 
 def source_subject_map() -> dict[str, str]:
-    """pixel_md5 -> subject group (originals + confidently matched copies) from groups.csv."""
+    """pixel_md5 -> subject: exact for originals, best embedding match for copies (~93.5% correct;
+    a wrong match only weakens the naive shuffled-label effect, so the check stays conservative)."""
     g = pd.read_csv(C.SPLITS_DIR / "groups.csv")
-    g = g[g["subject_group"] != "UNCERTAIN"]
-    return dict(zip(g["pixel_md5"], g["subject_group"]))
+    subj = np.where(g["kind"] == "original", g["subject_group"], g["match_subject"])
+    return {k: v for k, v in zip(g["pixel_md5"], subj) if isinstance(v, str)}
 
 
 def random_labels_by_subject(df: pd.DataFrame, subj: dict[str, str]) -> np.ndarray:
@@ -63,9 +63,10 @@ def random_labels_by_subject(df: pd.DataFrame, subj: dict[str, str]) -> np.ndarr
 
 def settings():
     subj = source_subject_map()
-    for name, split, shuffled in [("naive", "split_naive", False), ("image_group", "split_image", False),
+    for name, split, shuffled in [("naive", "split_naive", False), ("image_level_originals", "split_image", False),
                                   ("subject_group", "split_subject", False),
                                   ("naive_shuffled_by_source", "split_naive", True),
+                                  ("image_level_shuffled_by_subject", "split_image", True),
                                   ("subject_shuffled_by_source", "split_subject", True)]:
         df = load_split(split)
         if shuffled:

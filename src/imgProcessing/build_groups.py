@@ -154,6 +154,9 @@ def main() -> None:
 
     # archive-only extras: inherit (uuid source) or named source
     uuid_subject = dict(zip(aug["stem"], aug["subject_group"]))
+    uuid_match = dict(zip(aug["stem"], aug["match_subject"]))
+    extra["match_subject"] = np.where(is_named, (extra["class_name"] + "::" + extra["source"]).map(name_to_subject),
+                                      extra["source"].map(uuid_match))
     extra["subject_group"] = np.where(is_named, (extra["class_name"] + "::" + extra["source"]).map(name_to_subject),
                                       extra["source"].map(uuid_subject))
     extra["subject_group"] = extra["subject_group"].fillna("UNCERTAIN")
@@ -163,8 +166,8 @@ def main() -> None:
     orig["kind"], orig["confident"] = "original", True
     aug["kind"], extra["kind"] = "augmented", "augmented_extra"
     groups = pd.concat([orig[cols + ["kind"]],
-                        aug[cols + ["kind", "match_sim", "match_margin", "nearest_original"]],
-                        extra[cols + ["kind"]]], ignore_index=True)
+                        aug[cols + ["kind", "match_subject", "match_sim", "match_margin", "nearest_original"]],
+                        extra[cols + ["kind", "match_subject"]]], ignore_index=True)
     orig_nearest = dict(zip(orig["pixel_md5"], orig["pixel_md5"]))
     groups["image_group"] = groups["nearest_original"].fillna(groups["pixel_md5"].map(orig_nearest))
     groups.to_csv(C.SPLITS_DIR / "groups.csv", index=False)

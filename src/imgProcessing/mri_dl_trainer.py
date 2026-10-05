@@ -192,10 +192,10 @@ def train(cfg: TrainConfig, overfit_batch: bool = False, resume: bool = False) -
     batcher = GpuBatcher(rows, labels, device, cfg.image_size)
     tr_idx = np.arange(len(tr))
     va_idx = np.arange(len(tr), len(tr) + len(va))
-    is_orig = (tr["kind"] == "original").to_numpy() if "kind" in tr else np.ones(len(tr), bool)
+    is_orig = (~tr["kind"].isin(["augmented", "augmented_extra"])).to_numpy() if "kind" in tr else np.ones(len(tr), bool)
     orig_idx, aug_idx = tr_idx[is_orig], tr_idx[~is_orig]
 
-    model = build_model(cfg.arch, len(C.CLASS_NAMES), cfg.dropout, cfg.pretrained).to(device).to(memory_format=torch.channels_last)
+    model = build_model(cfg.arch, len(C.CLASS_NAMES), cfg.dropout, cfg.pretrained).to(device)  # NCHW: channels_last was 5-8x slower on this GPU/cuDNN
     counts = np.bincount(tr["y"], minlength=len(C.CLASS_NAMES)).astype(float)
     w = np.where(counts > 0, counts.sum() / (len(counts) * np.maximum(counts, 1)), 0.0)
     criterion = nn.CrossEntropyLoss(weight=torch.tensor(w, dtype=torch.float32, device=device), label_smoothing=cfg.label_smoothing)
@@ -203,7 +203,9 @@ def train(cfg: TrainConfig, overfit_batch: bool = False, resume: bool = False) -
     opt = torch.optim.AdamW([
         {"params": [p for p in model.parameters() if id(p) not in head_ids], "lr": cfg.lr * cfg.backbone_lr_mult},
         {"params": [p for p in model.parameters() if id(p) in head_ids], "lr": cfg.lr}], weight_decay=cfg.weight_decay)
-    steps_per_epoch = max(1, cfg.samples_per_epoch // cfg.batch_size)
+    # one epoch = all training originals + random dataset copies up to samples_per_epoch (honest split: originals only)
+    epoch_size = len(orig_idx) + min(len(aug_idx), max(0, cfg.samples_per_epoch - len(orig_idx)))
+    steps_per_epoch = max(1, math.ceil(epoch_size / cfg.batch_size))
     total, warm = cfg.epochs * steps_per_epoch, cfg.warmup_epochs * steps_per_epoch
     sched = torch.optim.lr_scheduler.LambdaLR(opt, lambda s: min(1.0, (s + 1) / max(1, warm)) * 0.5 * (1 + math.cos(math.pi * min(1.0, s / max(1, total)))))
     scaler = torch.amp.GradScaler(enabled=device.type == "cuda")
@@ -213,16 +215,19 @@ def train(cfg: TrainConfig, overfit_batch: bool = False, resume: bool = False) -
         fixed = np.concatenate([rng.choice(orig_idx[tr["y"].to_numpy()[orig_idx] == c], 8, replace=False) for c in range(4)
                                 if (tr["y"].to_numpy()[orig_idx] == c).sum() >= 8])
         set_backbone_trainable(model, cfg.arch, True)
+        # constant LR here: the warm-up schedule of the real run would keep the LR near 0 for these few steps
+        opt = torch.optim.AdamW(model.parameters(), lr=1e-3)
+        t_start = time.time()
         for step in range(150):
             model.train()
             x, y = batcher.get(fixed)
             with torch.autocast(device_type=device.type, enabled=device.type == "cuda"):
-                out = model(x.contiguous(memory_format=torch.channels_last))
+                out = model(x)
                 loss = F.cross_entropy(out.float(), y)
             opt.zero_grad(set_to_none=True); scaler.scale(loss).backward(); scaler.step(opt); scaler.update()
             if step % 25 == 0 or step == 149:
                 acc = float((out.argmax(1) == y).float().mean())
-                say(f"[overfit-batch] step {step} loss {float(loss):.4f} acc {acc:.3f}")
+                say(f"[overfit-batch] step {step} loss {float(loss.detach()):.4f} acc {acc:.3f} ({time.time() - t_start:.1f}s)")
         return {"overfit_batch_final_acc": acc, "overfit_batch_final_loss": float(loss)}
 
     ckpt_path = run_dir / "last.pt"
@@ -252,7 +257,7 @@ def train(cfg: TrainConfig, overfit_batch: bool = False, resume: bool = False) -
                 continue
             x, y = batcher.get(bi, augment=cfg.aug_strength)
             with torch.autocast(device_type=device.type, enabled=device.type == "cuda"):
-                out = model(x.contiguous(memory_format=torch.channels_last))
+                out = model(x)
                 loss = criterion(out.float(), y)
             opt.zero_grad(set_to_none=True)
             scaler.scale(loss).backward()
