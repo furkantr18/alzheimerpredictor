@@ -1,5 +1,7 @@
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+import logging
 import pandas as pd
 import os
 import subprocess
@@ -25,7 +27,32 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    allow_private_network=True,  # Starlette >= 1.x rejects PNA preflights unless this is set
 )
+
+# Chrome Private Network Access: an https page (oracleapex.com) calling localhost
+# needs this header on the preflight and on the actual response.
+@app.middleware("http")
+async def allow_private_network(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["Access-Control-Allow-Private-Network"] = "true"
+    return response
+
+logger = logging.getLogger("alzheimer_api")
+
+# Absolute paths so the API works from any working directory
+SRC_DIR = Path(__file__).resolve().parent
+REPO_ROOT = SRC_DIR.parent
+
+# MRI image endpoints (separate router, research prototype). If they cannot be mounted,
+# the tabular endpoints below still work unchanged.
+try:
+    if str(SRC_DIR) not in sys.path:
+        sys.path.insert(0, str(SRC_DIR))
+    from image_api import router as mri_router
+    app.include_router(mri_router)
+except Exception as _mri_err:
+    logger.warning("MRI endpoints disabled: %s", _mri_err)
 
 # ---------------------------
 # Mapping dictionary for CSV column names
@@ -67,6 +94,16 @@ COLUMN_MAP = {
     'Diagnosis': 'DIAGNOSIS'
 }
 
+# Other spellings sent by APEX (EXPORT_PATIENTS_PKG, page 2 form JS, GET_PATIENT_DATA)
+COLUMN_ALIASES = {
+    'FAMILY_HISTORY_ALZHEMERS': 'FamilyHistoryAlzheimers',    # EXPORT_PATIENTS_PKG
+    'CHOLESTEROL_TRYGLYCERIDS': 'CholesterolTriglycerides',   # page 2 form JS (item P2_CHOLESTEROL_TRYGLYCERIDS)
+    'FORGETFULNESS': 'Forgetfulness',                         # package, form JS, GET_PATIENT_DATA
+}
+
+# Columns that are not model features
+NON_FEATURE_COLUMNS = {'PatientID', 'Diagnosis'}
+
 # In-memory queue for incoming patient entries (not persisted to CSV)
 # This is intentionally process-local and kept lightweight. Use a lock
 # to avoid races when FastAPI runs multiple threads in the same process.
@@ -81,19 +118,38 @@ async def patients_data(req: Request):
     """
     Receives JSON from APEX (single dict or list of dicts) and saves to CSV.
     """
-    data = await req.json()
+    try:
+        data = await req.json()
+    except Exception:
+        return JSONResponse(status_code=400, content={"error": "Request body is not valid JSON."})
     print("RAW JSON:", data)
 
     # Ensure data is a list of dicts
-    if isinstance(data, dict):
+    if isinstance(data, dict) and data:
         data = [data]
 
-    # Convert to DataFrame and rename columns according to mapping
+    # Reject empty bodies and rows without any value
+    if not isinstance(data, list) or not data:
+        return JSONResponse(status_code=400, content={"error": "Empty request body: send one patient object or a list of patient objects."})
+    empty_rows = [i for i, row in enumerate(data)
+                  if not isinstance(row, dict) or all(v is None or str(v).strip() == "" for v in row.values())]
+    if empty_rows:
+        return JSONResponse(status_code=400, content={"error": f"Rows without any values (0-based index): {empty_rows[:20]}"})
+
+    # Convert to DataFrame and rename columns according to mapping (plus aliases)
     df = pd.DataFrame(data)
-    df = df.rename(columns={v: k for k, v in COLUMN_MAP.items() if v in df.columns})
+    rename_map = {v: k for k, v in COLUMN_MAP.items()}
+    rename_map.update(COLUMN_ALIASES)
+    df = df.rename(columns={c: rename_map[c] for c in df.columns if c in rename_map})
+
+    # Warn when model features are still missing after the rename (predict.py would zero-fill them)
+    missing_features = [k for k in COLUMN_MAP if k not in NON_FEATURE_COLUMNS and k not in df.columns]
+    if missing_features:
+        logger.warning("Missing model features after rename (will be zero-filled): %s", missing_features)
+        print(f"WARNING: missing model features after rename (will be zero-filled): {missing_features}")
 
     # Ensure folder exists
-    folder_path = "src/data/incomingData"
+    folder_path = SRC_DIR / "data" / "incomingData"
     os.makedirs(folder_path, exist_ok=True)
 
     # CSV file path
@@ -103,7 +159,7 @@ async def patients_data(req: Request):
     df.to_csv(csv_file, index=False)
     print(f"Saved incoming patients file: {csv_file} ({len(df)} rows) - overwritten")
 
-    return {"received": len(data), "message": f"Data saved to {csv_file} successfully!"}
+    return {"received": len(data), "missing_features": missing_features, "message": f"Data saved to {csv_file} successfully!"}
 
 
 @app.post("/patient_data")
@@ -147,14 +203,15 @@ def send_patients_data():
     then returns that CSV as JSON to APEX.
     """
     try:
-        prediction_script = "src/prediction/predict.py"
+        prediction_script = str(SRC_DIR / "prediction" / "predict.py")
         output_csv = os.path.join(os.path.dirname(prediction_script), "test_eval_results.csv")
 
         # Run the prediction script with a timeout and capture output for debugging
+        # (sys.executable = the venv python that runs this API)
         try:
-            proc = subprocess.run(["python", prediction_script], check=True, capture_output=True, text=True, timeout=300)
+            proc = subprocess.run([sys.executable, prediction_script], check=True, capture_output=True, text=True, timeout=300, cwd=str(REPO_ROOT))
         except subprocess.CalledProcessError as e:
-            return {"error": f"Prediction script failed (return code {e.returncode})", "stderr": e.stderr}
+            return {"error": f"Prediction script failed (return code {e.returncode})", "stderr": e.stderr, "stdout_tail": (e.stdout or "")[-2000:]}
         except subprocess.TimeoutExpired as e:
             return {"error": "Prediction script timed out", "details": str(e)}
 
@@ -213,7 +270,7 @@ def send_patient_data():
     in-process (using the `AlzheimerPredictor` in `src/prediction/predict.py`)
     and return the prediction to APEX. Otherwise fall back to batch behavior.
     """
-    prediction_script = "src/prediction/predict.py"
+    prediction_script = str(SRC_DIR / "prediction" / "predict.py")
 
     # Check in-memory queue first
     try:

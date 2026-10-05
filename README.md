@@ -110,6 +110,98 @@ cd "src/model training"
 python model_trainer.py
 ```
 
+### MRI Image Preprocessing (For Dementia Class Classification)
+
+If you added NEW, UNPROCESSED MRI images organized by class folders under `src/data/img_unprocessed/` (for example `MildDemented/`, `ModerateDemented/`, `NonDemented/`, `VeryMildDemented/`), run:
+
+```bash
+python src/imgProcessing/preprocess_mri.py --input-dir src/data/img_unprocessed
+```
+
+This pipeline performs MRI-focused preprocessing including:
+- brain-region masking and ROI cropping
+- denoising (Gaussian, median, bilateral, Wiener)
+- contrast enhancement (CLAHE, optional histogram equalization)
+- intensity normalization and discretization (binning)
+- feature enhancement (unsharp + edge enhancement)
+- geometric standardization (resize)
+- augmentation (rotation, scale, shear, flip, noise, blur, brightness/contrast)
+
+Outputs are written to:
+- `src/data/processed/mri/clean/<class>/`
+- `src/data/processed/mri/augmented/<class>/`
+- `src/data/processed/mri/manifest.csv`
+
+Example with custom settings:
+
+```bash
+python src/imgProcessing/preprocess_mri.py --target-size 224 --augment-per-image 2 --rotation-correction
+```
+
+### MRI Model Training (Image Classification)
+
+Train multiple MRI classifiers (Logistic Regression, SVM, Random Forest, KNN, MLP, and XGBoost if installed), compare results, and save the best model:
+
+```bash
+python src/imgProcessing/mri_model_trainer.py --include-augmented
+```
+
+Training artifacts are written to:
+- `src/imgProcessing/output/model_comparison.csv`
+- `src/imgProcessing/output/models/best_mri_model.pkl`
+- `src/imgProcessing/output/classification_report.txt`
+- `src/imgProcessing/output/plots/best_model_confusion_matrix.png`
+- `src/imgProcessing/output/training_summary.json`
+
+### MRI Deep Learning Training (Transfer Learning)
+
+Train transfer learning MRI classifiers with pretrained backbones:
+- `resnet50`
+- `efficientnet_b0`
+
+Examples:
+
+```bash
+python src/imgProcessing/mri_dl_trainer.py --architecture resnet50 --epochs 20
+python src/imgProcessing/mri_dl_trainer.py --architecture efficientnet_b0 --epochs 25 --batch-size 16
+```
+
+Deep learning artifacts are written to:
+- `src/imgProcessing/output/models/best_mri_dl_model.pt`
+- `src/imgProcessing/output/models/best_mri_dl_model_metadata.json`
+- `src/imgProcessing/output/dl_training_history.csv`
+- `src/imgProcessing/output/dl_classification_report.txt`
+- `src/imgProcessing/output/plots/best_mri_dl_confusion_matrix.png`
+- `src/imgProcessing/output/dl_training_summary.json`
+
+### MRI Inference
+
+Single image prediction:
+
+```bash
+python src/imgProcessing/predict_mri.py --image path/to/image.jpg
+```
+
+Batch prediction from directory:
+
+```bash
+python src/imgProcessing/predict_mri.py --image-dir path/to/folder
+```
+
+### MRI Deep Learning Inference
+
+Single image prediction:
+
+```bash
+python src/imgProcessing/predict_mri_dl.py --image path/to/image.jpg
+```
+
+Batch directory prediction:
+
+```bash
+python src/imgProcessing/predict_mri_dl.py --image-dir path/to/folder
+```
+
 **4. Launch Jupyter Notebook (optional):**
 
 For interactive data exploration:
