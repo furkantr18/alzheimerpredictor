@@ -74,7 +74,7 @@ def _load() -> dict:
             _state["loaded"] = True
             logger.info("MRI model loaded: %s", served.get("model_name"))
         except ImportError as err:
-            _state["error"] = ("missing_dependency", f"Image dependencies missing ({err}). pip install -r requirements-image.txt")
+            _state["error"] = ("missing_dependency", f"Image dependencies missing ({err}).")
         except Exception as err:
             logger.exception("MRI model failed to load")
             _state["error"] = ("load_failed", f"MRI model failed to load: {err}")
