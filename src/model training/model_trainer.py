@@ -617,7 +617,8 @@ class AlzheimerModelTrainer:
                 cat_weights = (total_train / (len(counts_train) * counts_train)).tolist()
             except Exception:
                 cat_weights = None
-            self.catboost_class_weights = cat_weights
+            # tuple: scikit-learn >= 1.6 clone() rejects a list here (CatBoost copies it)
+            self.catboost_class_weights = tuple(cat_weights) if cat_weights is not None else None
 
             print(f"[INFO] Computed class_distribution={self.class_distribution}")
             print(f"[INFO] xgb_scale_pos_weight={self.xgb_scale_pos_weight}")
