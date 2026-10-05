@@ -44,6 +44,16 @@ logger = logging.getLogger("alzheimer_api")
 SRC_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SRC_DIR.parent
 
+# MRI image endpoints (separate router, research prototype). If they cannot be mounted,
+# the tabular endpoints below still work unchanged.
+try:
+    if str(SRC_DIR) not in sys.path:
+        sys.path.insert(0, str(SRC_DIR))
+    from image_api import router as mri_router
+    app.include_router(mri_router)
+except Exception as _mri_err:
+    logger.warning("MRI endpoints disabled: %s", _mri_err)
+
 # ---------------------------
 # Mapping dictionary for CSV column names
 # ---------------------------

@@ -1,0 +1,13 @@
+# MRI image pipeline + /predict-mri endpoints. Install ON TOP of requirements.txt:
+#   pip install -r requirements.txt "scikit-learn<1.8"
+#   pip install -r requirements-image.txt --extra-index-url https://download.pytorch.org/whl/cu130
+# The tabular app does not need anything in this file.
+#
+# Tested 2026-10-05: Python 3.13.7, numpy 2.5.3, scikit-learn 1.7.2, Windows 11,
+# NVIDIA RTX 3050 Laptop (CUDA 13 driver). CPU-only machines: use
+#   --index-url https://download.pytorch.org/whl/cpu  (or plain PyPI) instead of cu130.
+torch==2.14.1
+torchvision==0.29.1
+opencv-python-headless>=4.10
+Pillow>=10.0.0
+python-multipart>=0.0.9

@@ -1,14 +1,19 @@
-"""Run inference with the trained MRI dementia classifier.
+"""Predict with a trained CLASSICAL MRI model (joblib artifact from mri_model_trainer.py).
+
+Fixed vs. ae3bce0: uses the shared preprocessing (identical to training), the class names
+saved WITH the model (no label-order mismatch), absolute default paths, and skips
+unreadable files with a warning instead of crashing.
 
 Usage:
-    python src/imgProcessing/predict_mri.py --image src/data/img_processed/NonDemented/example.jpg
-    python src/imgProcessing/predict_mri.py --image-dir src/data/img_processed/NonDemented
+    python src/imgProcessing/predict_mri.py --image x.jpg [--model-path ...joblib]
+    python src/imgProcessing/predict_mri.py --image-dir some/folder
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
 
 import cv2
@@ -16,103 +21,47 @@ import joblib
 import numpy as np
 import pandas as pd
 
-VALID_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff"}
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import mri_config as C  # noqa: E402
+from mri_model_trainer import predict_proba  # noqa: E402
+from mri_preprocess import PreprocessSpec, load_preprocessed  # noqa: E402
 
 
-def _iter_images(path: Path) -> list[Path]:
-    if path.is_file():
-        return [path] if path.suffix.lower() in VALID_EXTENSIONS else []
-    if not path.exists():
-        return []
-    return [p for p in path.rglob("*") if p.is_file() and p.suffix.lower() in VALID_EXTENSIONS]
-
-
-def _load_vector(image_path: Path, image_size: int) -> np.ndarray:
-    img = cv2.imread(str(image_path), cv2.IMREAD_GRAYSCALE)
-    if img is None:
-        raise ValueError(f"Unable to read image: {image_path}")
-    if img.shape[0] != image_size or img.shape[1] != image_size:
-        img = cv2.resize(img, (image_size, image_size), interpolation=cv2.INTER_AREA)
-    return (img.astype(np.float32) / 255.0).reshape(1, -1)
-
-
-def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Predict dementia class from MRI image(s)")
-    parser.add_argument("--image", type=Path, default=None, help="Single image path")
-    parser.add_argument("--image-dir", type=Path, default=None, help="Directory with MRI images")
-    parser.add_argument(
-        "--model-path",
-        type=Path,
-        default=Path("src/imgProcessing/output/models/best_mri_model.pkl"),
-        help="Path to saved model artifact",
-    )
-    parser.add_argument(
-        "--output-csv",
-        type=Path,
-        default=Path("src/imgProcessing/output/mri_predictions.csv"),
-        help="Where batch predictions will be saved",
-    )
-    return parser.parse_args()
+def predict_paths(paths: list[Path], artifact: dict) -> pd.DataFrame:
+    spec = PreprocessSpec.from_dict(artifact["preprocess"])
+    fs, names = artifact["feature_size"], artifact["class_names"]
+    rows = []
+    for p in paths:
+        try:
+            img = load_preprocessed(p, spec)
+        except Exception as err:
+            print(f"[WARN] skipped unreadable image {p}: {err}")
+            continue
+        feat = (cv2.resize(img, (fs, fs), interpolation=cv2.INTER_AREA).astype(np.float32) / 255.0).reshape(1, -1)
+        prob = predict_proba(artifact["pipeline"], feat)[0]
+        k = int(np.argmax(prob))
+        rows.append({"image_path": str(p), "predicted_class": names[k], "confidence": float(prob[k]),
+                     "probabilities_json": json.dumps({n: float(v) for n, v in zip(names, prob)})})
+    return pd.DataFrame(rows)
 
 
 def main() -> None:
-    args = parse_args()
-
-    if args.image is None and args.image_dir is None:
-        raise ValueError("Provide --image or --image-dir")
-
-    artifact = joblib.load(args.model_path)
-    model = artifact["model"]
-    scaler = artifact["scaler"]
-    pca = artifact["pca"]
-    label_encoder = artifact["label_encoder"]
-    image_size = int(artifact["image_size"])
-
-    paths: list[Path] = []
-    if args.image is not None:
-        paths.extend(_iter_images(args.image))
-    if args.image_dir is not None:
-        paths.extend(_iter_images(args.image_dir))
-
-    if not paths:
-        raise FileNotFoundError("No valid image files found for prediction")
-
-    rows = []
-    for p in sorted(set(paths)):
-        vec = _load_vector(p, image_size)
-        vec_scaled = scaler.transform(vec)
-        vec_pca = pca.transform(vec_scaled)
-
-        pred_idx = int(model.predict(vec_pca)[0])
-        pred_label = str(label_encoder.inverse_transform([pred_idx])[0])
-
-        if hasattr(model, "predict_proba"):
-            probs = model.predict_proba(vec_pca)[0]
-            confidence = float(np.max(probs))
-            prob_map = {
-                str(label_encoder.inverse_transform([i])[0]): float(prob)
-                for i, prob in enumerate(probs)
-            }
-        else:
-            confidence = None
-            prob_map = {}
-
-        rows.append(
-            {
-                "image_path": str(p),
-                "predicted_class": pred_label,
-                "confidence": confidence,
-                "probabilities_json": json.dumps(prob_map),
-            }
-        )
-
-    out_df = pd.DataFrame(rows)
+    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap.add_argument("--image", type=Path)
+    ap.add_argument("--image-dir", type=Path)
+    ap.add_argument("--model-path", type=Path, default=C.MODELS_DIR / "classical_split_subject_LogisticRegression.joblib")
+    ap.add_argument("--output-csv", type=Path, default=C.OUTPUT_DIR / "predictions" / "mri_predictions.csv")
+    args = ap.parse_args()
+    if not args.image and not args.image_dir:
+        sys.exit("Provide --image or --image-dir")
+    if not args.model_path.exists():
+        sys.exit(f"Model not found: {args.model_path}. Train first: python src/imgProcessing/mri_model_trainer.py")
+    paths = ([args.image] if args.image else []) + (list(C.iter_images(args.image_dir)) if args.image_dir else [])
+    out = predict_paths(paths, joblib.load(args.model_path))
     args.output_csv.parent.mkdir(parents=True, exist_ok=True)
-    out_df.to_csv(args.output_csv, index=False)
-
-    print(f"Predictions complete: {len(out_df)} images")
-    print(f"Output CSV: {args.output_csv}")
-    print(out_df.head(10).to_string(index=False))
+    out.to_csv(args.output_csv, index=False)
+    print(out.head(10).to_string(index=False))
+    print(f"{len(out)} predictions -> {args.output_csv}")
 
 
 if __name__ == "__main__":

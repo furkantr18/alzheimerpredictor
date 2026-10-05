@@ -158,9 +158,17 @@ def rotation_correction_from_mask(img_u8: np.ndarray, mask_u8: np.ndarray) -> np
     centered = coords - mean
     cov = np.cov(centered.T)
 
-    eigvals, eigvecs = np.linalg.eig(cov)
+    # eigh: the covariance matrix is symmetric. np.linalg.eig returns complex arrays on
+    # numpy >= 2.x and np.arctan2 then raises TypeError (bug B3 in IMAGE_DIAGNOSIS.md).
+    eigvals, eigvecs = np.linalg.eigh(cov)
+    # Near-round mask: the long axis is undefined, rotating would be random.
+    if eigvals.max() < 1.15 * max(eigvals.min(), 1e-9):
+        return img_u8
     major_axis = eigvecs[:, int(np.argmax(eigvals))]
-    angle = float(np.degrees(np.arctan2(major_axis[1], major_axis[0])))
+    axis_angle = float(np.degrees(np.arctan2(major_axis[1], major_axis[0])))
+    # Align the long (anterior-posterior) axis with the image VERTICAL. The old code aligned it
+    # with the x axis and so turned already upright axial slices by 90 degrees (bug B4).
+    angle = ((axis_angle - 90.0) + 90.0) % 180.0 - 90.0  # wrap to [-90, 90)
 
     if abs(angle) < 2.0:
         return img_u8
