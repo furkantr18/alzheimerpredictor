@@ -19,12 +19,14 @@ from __future__ import annotations
 
 import argparse
 import itertools
+import json
 import sys
 import time
 from pathlib import Path
 
 import joblib
 import numpy as np
+from sklearn.base import BaseEstimator, ClassifierMixin
 from sklearn.decomposition import PCA
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
@@ -45,6 +47,30 @@ FEATURE_SIZE = 64
 PCA_COMPONENTS = 128
 
 
+class ConsecutiveLabelXGB(BaseEstimator, ClassifierMixin):
+    """XGBoost needs labels 0..k-1. With only 2 ModerateDemented subjects, a grouped CV fold can lack
+    that class entirely, so labels are re-indexed here and `classes_` keeps the real label ids."""
+
+    def __init__(self, max_depth: int = 6, seed: int = 42):
+        self.max_depth = max_depth
+        self.seed = seed
+
+    def fit(self, X, y, sample_weight=None):
+        from xgboost import XGBClassifier
+        self.classes_ = np.unique(y)
+        self.model_ = XGBClassifier(n_estimators=300, max_depth=self.max_depth, learning_rate=0.1, subsample=0.9,
+                                    colsample_bytree=0.8, objective="multi:softprob", eval_metric="mlogloss",
+                                    tree_method="hist", device="cpu", random_state=self.seed)
+        self.model_.fit(X, np.searchsorted(self.classes_, y), sample_weight=sample_weight)
+        return self
+
+    def predict_proba(self, X):
+        return self.model_.predict_proba(X)
+
+    def predict(self, X):
+        return self.classes_[self.predict_proba(X).argmax(1)]
+
+
 def make_model(name: str, params: dict, seed: int):
     if name == "LogisticRegression":
         return LogisticRegression(C=params["C"], max_iter=3000, class_weight="balanced", random_state=seed)
@@ -58,10 +84,7 @@ def make_model(name: str, params: dict, seed: int):
     if name == "MLP":
         return MLPClassifier(hidden_layer_sizes=(256,), alpha=params["alpha"], early_stopping=True, max_iter=300, random_state=seed)
     if name == "XGBoost":
-        from xgboost import XGBClassifier
-        return XGBClassifier(n_estimators=300, max_depth=params["max_depth"], learning_rate=0.1, subsample=0.9,
-                             colsample_bytree=0.8, objective="multi:softprob", eval_metric="mlogloss",
-                             tree_method="hist", device="cuda" if _cuda() else "cpu", random_state=seed)
+        return ConsecutiveLabelXGB(max_depth=params["max_depth"], seed=seed)
     raise ValueError(name)
 
 
@@ -75,13 +98,6 @@ GRIDS = {
 }
 NEEDS_SAMPLE_WEIGHT = {"MLP": False, "XGBoost": True, "KNN": False}
 
-
-def _cuda() -> bool:
-    try:
-        import torch
-        return torch.cuda.is_available()
-    except Exception:
-        return False
 
 
 def predict_proba(pipe: Pipeline, X: np.ndarray) -> np.ndarray:
@@ -134,8 +150,11 @@ def main() -> None:
 
     names = list(GRIDS) if args.models == "all" else args.models.split(",")
     folds = list(grouped_cv_folds(tr, args.folds, args.seed))
+    report_path = C.REPORTS_DIR / f"classical_{args.split}.json"
     report = {"split": args.split, "seed": args.seed, "feature_size": FEATURE_SIZE, "pca_components": PCA_COMPONENTS,
               "cv": f"StratifiedGroupKFold({args.folds}) by subject_group on train; scored on originals", "models": {}}
+    if report_path.exists():  # re-running a subset of models keeps the others
+        report["models"] = json.loads(report_path.read_text(encoding="utf-8")).get("models", {})
 
     for name in names:
         t0 = time.time()
@@ -163,7 +182,7 @@ def main() -> None:
                                   "seconds": round(time.time() - t0, 1)}
         print(f"[classical] {name} best={best['params']} train macro-F1 {train_m['macro_f1']:.3f} | val macro-F1 {val_m['macro_f1']:.3f} "
               f"bal-acc {val_m['balanced_accuracy']:.3f} ({time.time() - t0:.0f}s)", flush=True)
-        save_json(report, C.REPORTS_DIR / f"classical_{args.split}.json")
+        save_json(report, report_path)
 
 
 if __name__ == "__main__":

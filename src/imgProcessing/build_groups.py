@@ -1,4 +1,9 @@
-"""Phase 3: leakage-aware groups.
+"""Phase 3: leakage-aware groups (and the documented attempt to trace dataset copies to patients).
+
+Outcome (2026-10-05): the copy -> patient matcher reached 93.5% on the 46 copies whose source
+is named in the file name, so dataset copies are NOT used for training in the honest split
+(make_splits.py uses originals only). groups.csv is still used for the original-image subject
+IDs and, via `match_subject`, for the naive shuffled-label leakage check.
 
 Every image gets a `subject_group`:
 * ORIGINAL images (archive (1)/val, 6,400): pseudo-subject from the file name

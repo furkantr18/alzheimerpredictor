@@ -24,8 +24,8 @@ BASE = "http://127.0.0.1:8000"
 def synthetic_png(h=208, w=176, fmt=".png") -> bytes:
     import cv2
     img = np.zeros((h, w), np.uint8)
-    cv2.ellipse(img, (w // 2, h // 2), (w // 2 - 12, h // 2 - 10), 0, 0, 360, 170, -1)
-    cv2.ellipse(img, (w // 2, h // 2), (18, 30), 0, 0, 360, 30, -1)          # "ventricles"
+    cv2.ellipse(img, (w // 2, h // 2), (max(w // 2 - 12, 2), max(h // 2 - 10, 2)), 0, 0, 360, 170, -1)
+    cv2.ellipse(img, (w // 2, h // 2), (max(w // 10, 1), max(h // 7, 1)), 0, 0, 360, 30, -1)  # "ventricles"
     noise = np.random.default_rng(0).normal(0, 12, img.shape)
     img = np.clip(img + noise * (img > 0), 0, 255).astype(np.uint8)
     ok, buf = cv2.imencode(fmt, img)
