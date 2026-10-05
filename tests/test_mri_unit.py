@@ -144,6 +144,22 @@ class Labels(unittest.TestCase):
         self.assertTrue(np.all(p[:, 1] == 0))
         self.assertGreater(p[y == 3, 3].mean(), 0.5)
 
+    def test_tail_sequences_are_relinked_by_continuity(self):
+        """Regression test for the 2026-10-05 fix: tails whose numbering is shuffled must be matched back."""
+        import subject_ids as S
+        rng = np.random.default_rng(3)
+        n, d = 12, 256
+        start, step = rng.normal(size=(n, d)), rng.normal(size=(n, d))
+
+        def unit(v):
+            v = v - v.mean(1, keepdims=True)
+            return v / np.linalg.norm(v, axis=1, keepdims=True)
+        head_prev, head_last = unit(start + 0.95 * step), unit(start + 1.0 * step)       # slices k-1, k
+        tail_first, tail_next = unit(start + 1.05 * step), unit(start + 1.1 * step)      # slices k+1, k+2
+        perm = rng.permutation(n)                                                         # tail numbering shuffled
+        a = S.match_tails(head_last, head_prev, tail_first[perm], tail_next[perm])
+        self.assertTrue(np.array_equal(perm[a], np.arange(n)), "every head must get its own tail back")
+
     def test_subject_id_parsing(self):
         import subject_ids as S
         self.assertEqual(S.parse("MildDemented", "mildDem0"), (0, 0))
