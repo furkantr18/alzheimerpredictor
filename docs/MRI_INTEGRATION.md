@@ -1,5 +1,7 @@
 # MRI image integration: code, honest evaluation, API
 
+> **Erratum (2026-10-05, branch `feature/mri-improvement`).** The patient-ID reconstruction described below had a bug: the slice-25 row and the `a (b)` tail files were attached to the wrong patient (1,441 of 6,400 slices, always within the same class). So the "patient-level" split used here was not fully patient-level: some slices of a test patient belonged to a real person whose other slices were in training. Labels were never wrong. The "3.2% near-twin slices" finding was caused by this bug (after the fix: 1 pair). The numbers in this report are therefore slightly optimistic and are superseded by the nested-CV results in `docs/MRI_IMPROVEMENT_REPORT.md`. Details: `docs/EXPERIMENT_PROTOCOL.md`, amendment 4.
+
 Backend repo (furkantr18/alzheimerpredictor), branch **`feature/mri-integration`** (local only, not pushed).
 Everything here was run on this machine (Windows 11, Python 3.13.7, NVIDIA RTX 3050 Laptop 4 GB) on 2026-10-05.
 The marks used: **[verified]** = run here on the real data; **[synthetic]** = run only on synthetic images; **[unverified]** = reasoning or estimate, not run.
