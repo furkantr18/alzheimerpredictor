@@ -189,7 +189,7 @@ Figures: `output/cv/report/fig_attention_B_mil_attn_{biomedclip,resnet50}_T3.png
 - 2D 8-bit JPEG axial slices of unknown preprocessing (probably OASIS-derived), not 3D volumes.
 - The label is per patient and copied to all slices.
 - No external validation.
-- All runs at 224 px; one Stage C configuration; focal loss and class-balanced sampling not run.
+- All runs at 224 px; one Stage C configuration; focal loss and class-balanced sampling not run. The fine-tuned baseline and Stage C use one seed per outer fold (15 different seeds overall), not 3 seeds per fold as the protocol asked for neural families; MIL used 3 seeds per fold. The optional refreshed Grad-CAM was not produced in this phase.
 
 ## 11. Serving
 
