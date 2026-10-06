@@ -144,6 +144,22 @@ class Labels(unittest.TestCase):
         self.assertTrue(np.all(p[:, 1] == 0))
         self.assertGreater(p[y == 3, 3].mean(), 0.5)
 
+    def test_tail_sequences_are_relinked_by_continuity(self):
+        """Regression test for the 2026-10-05 fix: tails whose numbering is shuffled must be matched back."""
+        import subject_ids as S
+        rng = np.random.default_rng(3)
+        n, d = 12, 256
+        start, step = rng.normal(size=(n, d)), rng.normal(size=(n, d))
+
+        def unit(v):
+            v = v - v.mean(1, keepdims=True)
+            return v / np.linalg.norm(v, axis=1, keepdims=True)
+        head_prev, head_last = unit(start + 0.95 * step), unit(start + 1.0 * step)       # slices k-1, k
+        tail_first, tail_next = unit(start + 1.05 * step), unit(start + 1.1 * step)      # slices k+1, k+2
+        perm = rng.permutation(n)                                                         # tail numbering shuffled
+        a = S.match_tails(head_last, head_prev, tail_first[perm], tail_next[perm])
+        self.assertTrue(np.array_equal(perm[a], np.arange(n)), "every head must get its own tail back")
+
     def test_subject_id_parsing(self):
         import subject_ids as S
         self.assertEqual(S.parse("MildDemented", "mildDem0"), (0, 0))
@@ -152,6 +168,34 @@ class Labels(unittest.TestCase):
         self.assertEqual(S.parse("VeryMildDemented", "27 (43)"), (42, 27))
         self.assertEqual(S.parse("ModerateDemented", "28"), (0, 28))
         self.assertIsNone(S.parse("NonDemented", "0a1b2c3d-0000-0000-0000-000000000000"))
+
+
+class MriInfoAnnotation(unittest.TestCase):
+    """/mri/info must flag metrics of models served before the patient-ID fix as superseded."""
+
+    def setUp(self):
+        sys.path.insert(0, str(IMG.parent))
+        import image_api
+        self.api = image_api
+        self._orig = image_api._load
+
+    def tearDown(self):
+        self.api._load = self._orig
+
+    def _info(self, served):
+        base = {"kind": "deep", "class_names": ["a"], "metrics": {"test": {"macro_f1": 0.5}}}
+        self.api._load = lambda: {"error": None, "served": {**base, **served}}
+        return self.api.mri_info()
+
+    def test_pre_fix_model_is_flagged(self):
+        out = self._info({})
+        self.assertEqual(out["metrics_annotation"]["metrics_status"], "pre-fix, superseded")
+        self.assertEqual(out["metrics"], {"test": {"macro_f1": 0.5}}, "stored metrics are kept, only annotated")
+        self.assertIn("docs/MRI_IMPROVEMENT_REPORT.md", out["metrics_annotation"]["see"])
+
+    def test_post_fix_model_is_not_flagged(self):
+        out = self._info({"patient_ids_fixed": self.api.PATIENT_ID_FIX})
+        self.assertNotIn("metrics_annotation", out)
 
 
 class Splits(unittest.TestCase):
