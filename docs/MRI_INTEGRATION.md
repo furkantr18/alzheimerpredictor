@@ -6,7 +6,7 @@ Backend repo (furkantr18/alzheimerpredictor), branch **`feature/mri-integration`
 Everything here was run on this machine (Windows 11, Python 3.13.7, NVIDIA RTX 3050 Laptop 4 GB) on 2026-10-05.
 The marks used: **[verified]** = run here on the real data; **[synthetic]** = run only on synthetic images; **[unverified]** = reasoning or estimate, not run.
 
-## 0. Results at a glance [verified]
+## 0. Results at a glance [verified at the time; PRE-FIX, SUPERSEDED: see the erratum above and `docs/MRI_IMPROVEMENT_REPORT.md`]
 
 Test set of the honest split = 960 ORIGINAL slices of 30 patients never seen in training (ModerateDemented: 1 patient, 32 slices). Evaluated once (`final_evaluation.py`). 4 classes; chance balanced accuracy 0.25; always answering "NonDemented" gives accuracy 0.50.
 
@@ -24,7 +24,7 @@ Figure: run `python src/imgProcessing/make_figures.py` to regenerate `fig_leakag
 | Patient-level split | PCA+LogReg (fixed) | 0.460 | 0.376 | 0.366 | 0.695 |
 | Patient-level split | majority class | 0.500 | 0.250 | 0.167 | – |
 
-**Bottom line:** the same network that scores 99.9% under the naive split reaches about **51% balanced accuracy / 0.48 macro-F1** on unseen patients. That is clearly above chance (0.25) but far from usable. Served model `final_resnet18_s42` (chosen on validation before the test run): test accuracy 0.568, balanced accuracy 0.520, macro-F1 0.499, ROC-AUC 0.816; subject-cluster bootstrap 95% CI for macro-F1 **0.41–0.61** (only 30 test patients, so every number carries roughly ±0.1).
+**Bottom line (pre-fix, superseded; corrected nested-CV estimates: 4-class 0.38, 3-class 0.52, binary 0.72 patient-level macro-F1):** the same network that scores 99.9% under the naive split reaches about **51% balanced accuracy / 0.48 macro-F1** on unseen patients. That is clearly above chance (0.25) but far from usable. Served model `final_resnet18_s42` (chosen on validation before the test run): test accuracy 0.568, balanced accuracy 0.520, macro-F1 0.499, ROC-AUC 0.816; subject-cluster bootstrap 95% CI for macro-F1 **0.41–0.61** (only 30 test patients, so every number carries roughly ±0.1).
 
 Per-class (served model, test): MildDemented recall 0.81 / precision 0.32; ModerateDemented recall 0.25 (8 of 32 slices of the single test patient); NonDemented F1 0.74; VeryMildDemented recall 0.34. Most errors are confusions among the neighbouring stages Mild ↔ VeryMild ↔ Non. When the slice probabilities of each test patient are averaged, the served model gets 18 of 30 patients right (0.60). Across the 9 runs this patient-level accuracy ranges 0.57–0.80, from only 30 patients.
 
@@ -64,7 +64,7 @@ Commits on the branch (oldest first): `fb5c888`, `2b39691`, `b0e0425`, `e858665`
 - Artefacts: brightness augmentation turned the black background grey in part of the copies (handled in preprocessing); copies are zoomed/stretched (200x190) versus originals (176x208).
 - Mean intensity differs by class (originals: NonDemented 74.3, VeryMild 70.1, Moderate 69.6, Mild 67.4). This is consistent with atrophy (more dark CSF) but is also a global cue a model could use; see the global-feature baseline in §4.
 
-### Patient (subject) IDs: reconstructed [verified]
+### Patient (subject) IDs: reconstructed [verified at the time, but WRONG for the slice-25 row and the tail files: see the erratum]
 The datasets ship no patient IDs, but the original file names encode them (`subject_ids.py`):
 - `<class>Dem<i>`: slices are stored slice-major, so subject = i mod P and slice = i div P, with P = 28 (Mild), 2 (Moderate), 100 (Non), 70 (VeryMild). Image i and i+P correlate 0.99 versus 0.89 for i and i+1.
 - `<a> (<b>)`: slice a (26..32) of subject b.
@@ -289,7 +289,7 @@ Long jobs log to `output/logs/` (`experiments.log`, `run_<name>.out`, per-run `t
 - Outputs (git-ignored): `src/imgProcessing/output/` with `inventory/`, `cache/`, `splits/` (`split_subject.csv`, `split_image.csv`, `split_naive.csv`, `groups.csv`), `models/` (classical, leakage, `dl_runs/<run>/` with `best.pt`, `last.pt`, `meta.json`, `history.csv`, `curves.png`, `train.log`; `served/`), `reports/` (`final_results.json/.csv`, `hp_search*.csv`, `classical_split_subject.json`, `grouping_report.json`, `splits_report.json`, `data_checks.json`, `gradcam/`, `fig_leakage_vs_honest.png`, `test_used.json`), `logs/`.
 - Baselines and logs for the tabular check and bug re-verification: `_backend/mri_baseline/`.
 
-## Türkçe kısa özet
+## Türkçe kısa özet (düzeltme öncesi; güncel sonuçlar `docs/MRI_IMPROVEMENT_REPORT.md` içinde)
 
 - **Çalışan kısım:** Yasemin'in MRI kodu `feature/mri-integration` dalına alındı ve hataları düzeltildi. Tablo modeline hiç dokunulmadı (13/13 test geçiyor, tahminler birebir aynı). API'ye `/predict-mri`, `/predict-mri/explain` (Grad-CAM) ve `/mri/info` eklendi. Model ilk istekte yükleniyor, model yoksa düzgün bir JSON hatası dönüyor.
 - **Veri setleri:** `archive (1)` = uraninjo, `archive` = aryansinghal10. İkisi de aynı 6.400 orijinal görüntüden türemiş; `archive` birinciyi tamamen içeriyor. Bu yüzden bağımsız bir dış test seti yok. Hasta kimliklerini dosya adlarından çıkardık: 200 hasta × 32 kesit.

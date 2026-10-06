@@ -154,18 +154,44 @@ def _predict(st: dict, gray, explain: bool = False) -> dict:
     return out
 
 
+# Models served before the patient-ID fix (2026-10-05) were evaluated on a split built with wrong patient IDs
+# (1,441 slices attached to another patient of the same class). Their stored metrics are kept but marked
+# superseded; the current honest estimate for the same model type comes from the nested patient-grouped CV.
+PATIENT_ID_FIX = "2026-10-05"
+SUPERSEDED_NOTE = {
+    "metrics_status": "pre-fix, superseded",
+    "reason": "The metrics above come from a split built with wrong reconstructed patient IDs (22.5% of slices attached to "
+              "another patient of the same class) and a single 30-patient test set; they are optimistic.",
+    "current_estimate": {
+        "source": "nested patient-grouped CV, 200 patients, 5 folds x 3 repeats, fine-tuned ResNet-18, 4 classes, patient level",
+        "macro_f1": 0.377, "macro_f1_ci95": [0.332, 0.529], "balanced_accuracy": 0.411, "roc_auc_ovr": 0.710,
+        "note": "ModerateDemented has 2 patients; the 3-class (0.52) and binary (0.72) estimates are in the report.",
+    },
+    "see": "docs/MRI_IMPROVEMENT_REPORT.md",
+}
+
+
+def _metrics_annotation(served: dict) -> dict | None:
+    """None for models whose metadata says they were built with the fixed patient IDs, else the superseded note."""
+    return None if served.get("patient_ids_fixed") == PATIENT_ID_FIX else SUPERSEDED_NOTE
+
+
 @router.get("/mri/info")
 def mri_info():
     st = _load()
     if st["error"]:
         return {"model_available": False, "reason": st["error"][1], "disclaimer": DISCLAIMER}
     s = st["served"]
-    return {"model_available": True, "class_names": s["class_names"],
-            "model": {"name": s.get("model_name"), "version": s.get("version"), "kind": s["kind"], "arch": s.get("arch")},
-            "metrics": s.get("metrics"), "dataset": s.get("dataset"), "evaluation": s.get("evaluation"),
-            "input": "One 2D axial brain MRI slice, skull-stripped like the training data (JPG/PNG/BMP/TIFF, max "
-                     f"{MAX_UPLOAD_BYTES // (1024 * 1024)} MB).",
-            "disclaimer": DISCLAIMER}
+    out = {"model_available": True, "class_names": s["class_names"],
+           "model": {"name": s.get("model_name"), "version": s.get("version"), "kind": s["kind"], "arch": s.get("arch")},
+           "metrics": s.get("metrics"), "dataset": s.get("dataset"), "evaluation": s.get("evaluation"),
+           "input": "One 2D axial brain MRI slice, skull-stripped like the training data (JPG/PNG/BMP/TIFF, max "
+                    f"{MAX_UPLOAD_BYTES // (1024 * 1024)} MB).",
+           "disclaimer": DISCLAIMER}
+    note = _metrics_annotation(s)
+    if note:
+        out["metrics_annotation"] = note
+    return out
 
 
 @router.post("/predict-mri")

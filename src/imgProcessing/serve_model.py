@@ -21,8 +21,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import mri_config as C  # noqa: E402
 
 DATASET = {"name": "uraninjo/augmented-alzheimer-mri-dataset-v2 (Kaggle), folder datasets/archive (1)",
-           "note": "6,400 original 2D axial slices of 200 pseudo-subjects (patient IDs reconstructed from file names) "
-                   "+ 33,984 augmented copies; train only uses copies of train subjects."}
+           "note": "6,400 original 2D axial slices of 200 pseudo-subjects (patient IDs reconstructed from file names). "
+                   "Training uses the original slices of training subjects with on-the-fly augmentation; the dataset's "
+                   "augmented copies are not used. Models trained on splits made before the patient-ID fix (2026-10-05) "
+                   "are flagged by /mri/info as superseded."}
 
 
 def main() -> None:

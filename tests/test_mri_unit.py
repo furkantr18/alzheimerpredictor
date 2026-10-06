@@ -170,6 +170,34 @@ class Labels(unittest.TestCase):
         self.assertIsNone(S.parse("NonDemented", "0a1b2c3d-0000-0000-0000-000000000000"))
 
 
+class MriInfoAnnotation(unittest.TestCase):
+    """/mri/info must flag metrics of models served before the patient-ID fix as superseded."""
+
+    def setUp(self):
+        sys.path.insert(0, str(IMG.parent))
+        import image_api
+        self.api = image_api
+        self._orig = image_api._load
+
+    def tearDown(self):
+        self.api._load = self._orig
+
+    def _info(self, served):
+        base = {"kind": "deep", "class_names": ["a"], "metrics": {"test": {"macro_f1": 0.5}}}
+        self.api._load = lambda: {"error": None, "served": {**base, **served}}
+        return self.api.mri_info()
+
+    def test_pre_fix_model_is_flagged(self):
+        out = self._info({})
+        self.assertEqual(out["metrics_annotation"]["metrics_status"], "pre-fix, superseded")
+        self.assertEqual(out["metrics"], {"test": {"macro_f1": 0.5}}, "stored metrics are kept, only annotated")
+        self.assertIn("docs/MRI_IMPROVEMENT_REPORT.md", out["metrics_annotation"]["see"])
+
+    def test_post_fix_model_is_not_flagged(self):
+        out = self._info({"patient_ids_fixed": self.api.PATIENT_ID_FIX})
+        self.assertNotIn("metrics_annotation", out)
+
+
 class Splits(unittest.TestCase):
     def test_units_never_shared_and_moderate_rule(self):
         import pandas as pd
