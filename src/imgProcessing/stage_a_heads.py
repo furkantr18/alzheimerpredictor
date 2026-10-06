@@ -250,7 +250,12 @@ def main() -> None:
     ap.add_argument("--all", action="store_true")
     ap.add_argument("--positions", action="store_true")
     ap.add_argument("--jobs", type=int, default=8)
+    ap.add_argument("--strict", action="store_true", help="sensitivity analysis: stricter groups + folds_strict")
     a = ap.parse_args()
+    if a.strict:
+        cv.slices.use_override = True
+        run(a.emb, a.head.split(","), a.task, n_jobs=a.jobs, fold_name="folds_strict", tag="_strict")
+        return
     if a.all:
         st = json.loads((cv.CV_DIR / "emb" / "status.json").read_text())
         embs = [k for k, v in st.items() if v.get("ok") and not k.endswith("_25d") and k != "handcrafted"]

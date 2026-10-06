@@ -101,10 +101,24 @@ def comparison(task: str, baseline: str = "B_ft_resnet18") -> None:
     """Every method on this task vs the baseline: summary + paired difference (macro-F1, balanced acc)."""
     nc = len(cv.TASKS[task]["names"])
     base = cv.load_oof(baseline, task)
+    strict_base = cv.CV_DIR / "oof" / f"{baseline}_strict__{task}.npz"
+    base_strict = cv.load_oof(f"{baseline}_strict", task) if strict_base.exists() else None
     rows = []
     for p in sorted((cv.CV_DIR / "oof").glob(f"*__{task}.npz")):
         m = p.name.split("__")[0]
         oof = cv.load_oof(m, task)
+        if m.endswith("_strict"):  # sensitivity analysis: other units (199 groups) -> compare with the strict baseline only
+            if base_strict is None or m == f"{baseline}_strict":
+                s = cv.summarize(oof, nc)
+                rows.append({"method": m, **{k: s[k]["mean"] for k in cv.METRICS}, **{f"{k}_ci": s[k]["ci95"] for k in ("macro_f1", "balanced_acc", "qwk")},
+                             "slice_macro_f1": None, "comparison_baseline": "none (strict units)"})
+                continue
+            s = cv.summarize(oof, nc)
+            d = cv.paired(oof, base_strict, nc, metric="macro_f1", n_boot=2000)
+            rows.append({"method": m, **{k: s[k]["mean"] for k in cv.METRICS}, **{f"{k}_ci": s[k]["ci95"] for k in ("macro_f1", "balanced_acc", "qwk")},
+                         "slice_macro_f1": None, "diff_macro_f1": d["diff"], "diff_macro_f1_ci": d["ci95"],
+                         "diff_macro_f1_distinguishable": d["distinguishable"], "comparison_baseline": f"{baseline}_strict"})
+            continue
         rf = cv.CV_DIR / "results" / f"{m}__{task}.json"
         s = json.loads(rf.read_text()) if rf.exists() else cv.summarize(oof, nc)
         row = {"method": m, **{f"{k}": s[k]["mean"] for k in cv.METRICS}, **{f"{k}_ci": s[k]["ci95"] for k in ("macro_f1", "balanced_acc", "qwk")},
