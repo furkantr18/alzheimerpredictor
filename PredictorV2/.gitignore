@@ -1,0 +1,13 @@
+# ADNI data falls under the ADNI Data Use Agreement: never commit or push it.
+data/
+*.csv
+*.xlsx
+*.zip
+*.nii
+*.nii.gz
+*.dcm
+
+# Results stay local until the manuscript is cleared by the ADNI Data and Publications Committee.
+output/
+
+__pycache__/
