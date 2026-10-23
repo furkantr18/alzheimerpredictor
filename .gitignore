@@ -58,3 +58,16 @@ src/imgProcessing/output/
 src/imgProcessing/output/**
 
 
+
+# ---- ADNI data (ADNI Data Use Agreement: never commit or push) ----
+adni_data/
+**/adni_data/
+ADNIMERGE*
+*UCSFFSX*
+*DXSUM*
+*DATADIC*
+ADNI_*VisitList*.csv
+ADNI_ScreeningList*.csv
+# ADNI results stay local until the manuscript is cleared by the ADNI Data and Publications Committee
+PredictorV2/data/
+PredictorV2/output/

@@ -14,7 +14,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-import adni_config as cfg
+from common import config as cfg
 
 PHASE_ORDER = ["ADNI1", "ADNIGO", "ADNI2", "ADNI3", "ADNI4"]
 
